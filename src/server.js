@@ -1,10 +1,12 @@
 import { readFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import { ObserverError } from "./langfuse.js";
-import { parseRecentWindow, parseTraceId } from "./trace-model.js";
+import { parseRecentWindow, parseSessionId, parseTraceId } from "./trace-model.js";
 import {
   renderProblemPage,
   renderRecentPage,
+  renderSessionPage,
+  renderSessionsPage,
   renderTracePage,
 } from "./views.js";
 
@@ -53,8 +55,22 @@ async function handleRequest(request, response, observer) {
     await showRecent(response, observer, url);
     return;
   }
+  if (url.pathname === "/sessions") {
+    await showSessions(response, observer, url);
+    return;
+  }
+  if (url.pathname === "/session-lookup") {
+    redirectToSession(response, url);
+    return;
+  }
   if (url.pathname === "/lookup") {
     redirectToTrace(response, url);
+    return;
+  }
+
+  const sessionMatch = url.pathname.match(/^\/sessions\/([^/]+)$/u);
+  if (sessionMatch) {
+    await showSession(response, observer, url, sessionMatch[1]);
     return;
   }
 
@@ -77,13 +93,28 @@ async function showRecent(response, observer, url) {
     sendProblem(response, {
       status: 400,
       title: "Invalid recent window",
-      message: "Choose 1h, 6h, 24h, or 7d.",
+      message: "Choose 1h, 6h, 24h, 7d, 30d, or 90d.",
     });
     return;
   }
 
   const result = await observer.listRecentTraces(window);
   sendHtml(response, 200, renderRecentPage(result));
+}
+
+async function showSessions(response, observer, url) {
+  const window = parseRecentWindow(url.searchParams.get("window") ?? "24h");
+  if (window === null) {
+    sendProblem(response, {
+      status: 400,
+      title: "Invalid recent window",
+      message: "Choose 1h, 6h, 24h, 7d, 30d, or 90d.",
+    });
+    return;
+  }
+
+  const result = await observer.listRecentSessions(window);
+  sendHtml(response, 200, renderSessionsPage(result));
 }
 
 function redirectToTrace(response, url) {
@@ -105,15 +136,55 @@ function redirectToTrace(response, url) {
   response.end();
 }
 
-async function showTrace(response, observer, url, encodedTraceId) {
-  let decodedTraceId;
-  try {
-    decodedTraceId = decodeURIComponent(encodedTraceId);
-  } catch {
-    decodedTraceId = "";
-  }
-  const traceId = parseTraceId(decodedTraceId);
+function redirectToSession(response, url) {
+  const sessionId = parseSessionId(url.searchParams.get("sessionId") ?? "");
   const window = parseRecentWindow(url.searchParams.get("window") ?? "24h") ?? "24h";
+  if (sessionId === null) {
+    sendProblem(response, {
+      status: 400,
+      title: "Invalid session ID",
+      message: "Enter a printable session ID from 1 to 200 characters.",
+    });
+    return;
+  }
+
+  response.writeHead(303, {
+    ...SECURITY_HEADERS,
+    Location: `/sessions/${encodeURIComponent(sessionId)}?window=${encodeURIComponent(window)}`,
+  });
+  response.end();
+}
+
+async function showSession(response, observer, url, encodedSessionId) {
+  const sessionId = decodeIdentifier(encodedSessionId, parseSessionId);
+  const window = parseRecentWindow(url.searchParams.get("window") ?? "24h") ?? "24h";
+  if (sessionId === null) {
+    sendProblem(response, {
+      status: 400,
+      title: "Invalid session ID",
+      message: "The session ID in this address is not valid.",
+    });
+    return;
+  }
+
+  const session = await observer.getSession(sessionId);
+  if (session === null) {
+    sendProblem(response, {
+      status: 404,
+      title: "Session not found",
+      message: "Langfuse returned no observations for this session in the last 90 days.",
+      detail: sessionId,
+    });
+    return;
+  }
+
+  sendHtml(response, 200, renderSessionPage(session, window));
+}
+
+async function showTrace(response, observer, url, encodedTraceId) {
+  const traceId = decodeIdentifier(encodedTraceId, parseTraceId);
+  const window = parseRecentWindow(url.searchParams.get("window") ?? "24h") ?? "24h";
+  const sessionId = parseSessionId(url.searchParams.get("session") ?? "");
   if (traceId === null) {
     sendProblem(response, {
       status: 400,
@@ -134,7 +205,15 @@ async function showTrace(response, observer, url, encodedTraceId) {
     return;
   }
 
-  sendHtml(response, 200, renderTracePage(trace, window));
+  sendHtml(response, 200, renderTracePage(trace, window, sessionId));
+}
+
+function decodeIdentifier(encoded, parse) {
+  try {
+    return parse(decodeURIComponent(encoded));
+  } catch {
+    return null;
+  }
 }
 
 function problemFor(error) {

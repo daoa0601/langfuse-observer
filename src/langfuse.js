@@ -1,10 +1,13 @@
 import {
+  describeSession,
   describeTrace,
   startOfWindow,
+  summarizeRecentSessions,
   summarizeRecentTraces,
 } from "./trace-model.js";
 
-const RECENT_ROW_LIMIT = 5_000;
+const RECENT_ROW_LIMIT = 20_000;
+const SESSION_ROW_LIMIT = 20_000;
 const TRACE_ROW_LIMIT = 10_000;
 const TRACE_LOOKBACK_MS = 90 * 24 * 60 * 60 * 1_000;
 const REQUEST_TIMEOUT_MS = 10_000;
@@ -31,15 +34,47 @@ export function createLangfuseObserver(config, dependencies = {}) {
         fromStartTime: from.toISOString(),
         toStartTime: to.toISOString(),
         limit: "1000",
-      }, parseLightObservation, RECENT_ROW_LIMIT, (rows) => {
-        return new Set(rows.map((row) => row.traceId)).size >= 50;
-      });
+      }, parseLightObservation, RECENT_ROW_LIMIT);
 
       return Object.freeze({
         window,
         queriedAt: to.toISOString(),
         traces: summarizeRecentTraces(observations),
       });
+    },
+
+    async listRecentSessions(window) {
+      const to = now();
+      const from = startOfWindow(window, to);
+      const observations = await readObservationPages({
+        fields: "core,basic,trace_context",
+        fromStartTime: from.toISOString(),
+        toStartTime: to.toISOString(),
+        limit: "1000",
+      }, parseLightObservation, RECENT_ROW_LIMIT);
+
+      return Object.freeze({
+        window,
+        queriedAt: to.toISOString(),
+        sessions: summarizeRecentSessions(observations),
+      });
+    },
+
+    async getSession(sessionId) {
+      const to = now();
+      const from = new Date(to.getTime() - TRACE_LOOKBACK_MS);
+      const filter = JSON.stringify([
+        { type: "string", column: "sessionId", operator: "=", value: sessionId },
+      ]);
+      const observations = await readObservationPages({
+        fields: "core,basic,trace_context",
+        filter,
+        fromStartTime: from.toISOString(),
+        toStartTime: to.toISOString(),
+        limit: "1000",
+      }, parseLightObservation, SESSION_ROW_LIMIT);
+
+      return describeSession(sessionId, observations);
     },
 
     async getTrace(traceId) {
@@ -57,7 +92,7 @@ export function createLangfuseObserver(config, dependencies = {}) {
     },
   });
 
-  async function readObservationPages(query, parseObservation, rowLimit, shouldStop = () => false) {
+  async function readObservationPages(query, parseObservation, rowLimit) {
     const rows = [];
     const seenCursors = new Set();
     let cursor = null;
@@ -78,7 +113,7 @@ export function createLangfuseObserver(config, dependencies = {}) {
       }
       rows.push(...parsedRows);
 
-      if (!page.cursor || shouldStop(rows)) {
+      if (!page.cursor) {
         return rows;
       }
       if (seenCursors.has(page.cursor)) {
@@ -166,7 +201,6 @@ function parseFullObservation(value, expectedTraceId) {
     tags: stringArray(value.tags),
     statusMessage: optionalString(value.statusMessage),
     userId: optionalString(value.userId),
-    sessionId: optionalString(value.sessionId),
     input: displayText(value.input),
     output: displayText(value.output),
     metadata: jsonValue(value.metadata, {}),
@@ -197,6 +231,7 @@ function parseCore(value) {
     parentId: optionalString(value.parentObservationId),
     type: requiredString(value.type, "type"),
     name: optionalString(value.name),
+    sessionId: optionalString(value.sessionId),
     level: optionalString(value.level) ?? "DEFAULT",
     startTime,
     endTime: optionalDate(value.endTime, "endTime"),

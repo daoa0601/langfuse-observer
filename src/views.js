@@ -25,7 +25,7 @@ export function renderRecentPage(result) {
     title: "Recent traces",
     body: `
       <main class="page-shell">
-        ${renderTopBar()}
+        ${renderTopBar("traces")}
         <section class="hero compact-hero">
           <div>
             <p class="eyebrow">Read-only local viewer</p>
@@ -71,7 +71,110 @@ export function renderRecentPage(result) {
   });
 }
 
-export function renderTracePage(trace, window) {
+export function renderSessionsPage(result) {
+  const windowLabel = RECENT_WINDOWS[result.window].label;
+  const sessions = result.sessions.length === 0
+    ? renderSessionEmptyState(windowLabel)
+    : `<ol class="session-list" data-testid="session-list">${result.sessions.map((session) => renderSessionCard(session, result.window)).join("")}</ol>`;
+
+  return renderLayout({
+    title: "Recent sessions",
+    body: `
+      <main class="page-shell">
+        ${renderTopBar("sessions")}
+        <section class="hero compact-hero">
+          <div>
+            <p class="eyebrow">Multi-trace activity</p>
+            <h1>Follow the whole session.</h1>
+            <p class="hero-copy">Sessions group related traces without hiding the observations inside them.</p>
+          </div>
+          ${renderSessionLookupForm(result.window)}
+        </section>
+        <section class="workspace">
+          <aside class="control-panel" aria-label="Session controls">
+            <div>
+              <p class="section-label">Recent window</p>
+              <form class="window-form" method="get" action="/sessions">
+                <label class="sr-only" for="session-window">Recent window</label>
+                <select id="session-window" name="window">${renderWindowOptions(result.window)}</select>
+                <button class="button secondary" type="submit">Refresh</button>
+              </form>
+            </div>
+            <div class="connection-card">
+              <span class="status-dot" aria-hidden="true"></span>
+              <div>
+                <strong>Langfuse connected</strong>
+                <span>Checked ${escapeHtml(formatDate(result.queriedAt))}</span>
+              </div>
+            </div>
+            <div class="tip-card">
+              <p class="section-label">Complete results</p>
+              <p>The viewer follows every Langfuse cursor in this window before it groups sessions.</p>
+            </div>
+          </aside>
+          <section class="trace-panel" aria-labelledby="sessions-heading">
+            <div class="panel-heading">
+              <div>
+                <p class="section-label">Shared session IDs</p>
+                <h2 id="sessions-heading">Recent sessions</h2>
+              </div>
+              <span class="count-pill">${result.sessions.length} shown</span>
+            </div>
+            ${sessions}
+          </section>
+        </section>
+      </main>`,
+  });
+}
+
+export function renderSessionPage(session, window) {
+  const duration = formatDuration(Date.parse(session.latestAt) - Date.parse(session.startedAt));
+
+  return renderLayout({
+    title: session.id,
+    body: `
+      <main class="page-shell detail-shell">
+        ${renderTopBar("sessions")}
+        <nav class="breadcrumbs" aria-label="Breadcrumb">
+          <a href="/sessions?window=${escapeAttribute(window)}">Recent sessions</a>
+          <span aria-hidden="true">/</span>
+          <span>Session detail</span>
+        </nav>
+        <section class="trace-hero">
+          <div class="trace-heading">
+            <div class="session-mark" aria-hidden="true"></div>
+            <div>
+              <p class="eyebrow">Session</p>
+              <h1 class="session-title">${escapeHtml(session.id)}</h1>
+              <p class="hero-copy">Every trace discovered for this session during the last 90 days.</p>
+            </div>
+          </div>
+          <a class="button secondary" href="/sessions?window=${escapeAttribute(window)}">Back to sessions</a>
+        </section>
+        <dl class="stats-grid">
+          ${renderStat("Started", formatDate(session.startedAt))}
+          ${renderStat("Latest activity", formatDate(session.latestAt))}
+          ${renderStat("Duration", duration)}
+          ${renderStat("Traces", NUMBER_FORMATTER.format(session.traceCount))}
+          ${renderStat("Observations", NUMBER_FORMATTER.format(session.observationCount))}
+        </dl>
+        <section class="observation-section" aria-labelledby="session-traces-heading">
+          <div class="panel-heading">
+            <div>
+              <p class="section-label">Chronological replay</p>
+              <h2 id="session-traces-heading">Traces in this session</h2>
+            </div>
+            <p class="tree-hint">Open a trace to inspect its complete parent tree and payloads.</p>
+          </div>
+          <ol class="session-trace-list">
+            ${session.traces.map((trace, index) => renderSessionTrace(trace, session, window, index)).join("")}
+          </ol>
+        </section>
+      </main>`,
+  });
+}
+
+export function renderTracePage(trace, window, sessionId = null) {
   const totalTokens = trace.rows.reduce(
     (sum, row) => sum + (row.observation.usage.total ?? 0),
     0,
@@ -83,14 +186,21 @@ export function renderTracePage(trace, window) {
   const duration = trace.endedAt === null
     ? "In progress"
     : formatDuration(Date.parse(trace.endedAt) - Date.parse(trace.startedAt));
+  const backHref = sessionId
+    ? `/sessions/${encodeURIComponent(sessionId)}?window=${escapeAttribute(window)}`
+    : `/?window=${escapeAttribute(window)}`;
+  const backLabel = sessionId ? "Session" : "Recent traces";
+  const sessionLinks = trace.sessionIds.map((id) =>
+    `<a class="session-link mono" href="/sessions/${encodeURIComponent(id)}?window=${escapeAttribute(window)}">Session ${escapeHtml(id)}</a>`,
+  ).join("");
 
   return renderLayout({
     title: trace.name,
     body: `
       <main class="page-shell detail-shell">
-        ${renderTopBar()}
+        ${renderTopBar("traces")}
         <nav class="breadcrumbs" aria-label="Breadcrumb">
-          <a href="/?window=${escapeAttribute(window)}">Recent traces</a>
+          <a href="${backHref}">${escapeHtml(backLabel)}</a>
           <span aria-hidden="true">/</span>
           <span>Trace detail</span>
         </nav>
@@ -101,9 +211,10 @@ export function renderTracePage(trace, window) {
               <p class="eyebrow">Trace</p>
               <h1>${escapeHtml(trace.name)}</h1>
               <p class="mono trace-id">${escapeHtml(trace.id)}</p>
+              ${sessionLinks}
             </div>
           </div>
-          <a class="button secondary" href="/?window=${escapeAttribute(window)}">Back to traces</a>
+          <a class="button secondary" href="${backHref}">Back to ${escapeHtml(backLabel.toLowerCase())}</a>
         </section>
         <dl class="stats-grid">
           ${renderStat("Started", formatDate(trace.startedAt))}
@@ -149,13 +260,17 @@ export function renderProblemPage({ title, message, detail = null }) {
   });
 }
 
-function renderTopBar() {
+function renderTopBar(active = null) {
   return `
     <header class="topbar">
       <a class="brand" href="/" aria-label="Langfuse Observer home">
         <span class="brand-symbol" aria-hidden="true"><i></i><i></i><i></i></span>
         <span>Langfuse <strong>Observer</strong></span>
       </a>
+      <nav class="topbar-nav" aria-label="Primary">
+        <a${active === "traces" ? ' aria-current="page"' : ""} href="/">Traces</a>
+        <a${active === "sessions" ? ' aria-current="page"' : ""} href="/sessions">Sessions</a>
+      </nav>
       <span class="read-only-badge">Read only</span>
     </header>`;
 }
@@ -168,6 +283,18 @@ function renderLookupForm(window) {
       <div class="lookup-row">
         <input id="traceId" name="traceId" type="text" maxlength="256" autocomplete="off" spellcheck="false" placeholder="Paste a trace ID" required>
         <button class="button primary" type="submit">Open trace</button>
+      </div>
+    </form>`;
+}
+
+function renderSessionLookupForm(window) {
+  return `
+    <form class="lookup-form" method="get" action="/session-lookup">
+      <input type="hidden" name="window" value="${escapeAttribute(window)}">
+      <label for="sessionId">Open a session by ID</label>
+      <div class="lookup-row">
+        <input id="sessionId" name="sessionId" type="text" maxlength="200" autocomplete="off" spellcheck="false" placeholder="Paste a session ID" required>
+        <button class="button primary" type="submit">Open session</button>
       </div>
     </form>`;
 }
@@ -188,6 +315,63 @@ function renderEmptyState(windowLabel) {
       <h3>No traces in the last ${escapeHtml(windowLabel)}</h3>
       <p>The connection works. This Langfuse project has no logical root observations in the selected window.</p>
     </div>`;
+}
+
+function renderSessionEmptyState(windowLabel) {
+  return `
+    <div class="empty-state" data-testid="session-empty-state">
+      <div class="empty-orbit session-orbit" aria-hidden="true"><span></span></div>
+      <h3>No sessions in the last ${escapeHtml(windowLabel)}</h3>
+      <p>The connection works. No observations in this window carry a session ID.</p>
+    </div>`;
+}
+
+function renderSessionCard(session, window) {
+  const levelClass = session.highestLevel.toLowerCase();
+  const tags = session.tags.slice(0, 3).map((tag) => `<span class="tag">${escapeHtml(tag)}</span>`).join("");
+  const traceNote = `${session.traceCount} ${session.traceCount === 1 ? "trace" : "traces"}`;
+  const observationNote = `${session.observationCount} ${session.observationCount === 1 ? "observation" : "observations"}`;
+
+  return `
+    <li>
+      <a class="session-card" href="/sessions/${encodeURIComponent(session.id)}?window=${escapeAttribute(window)}">
+        <span class="session-card-mark ${escapeAttribute(levelClass)}" aria-hidden="true"></span>
+        <span class="trace-card-main">
+          <span class="session-card-kicker">Session</span>
+          <span class="mono session-card-title">${escapeHtml(session.id)}</span>
+          <span class="trace-tags">${tags}</span>
+        </span>
+        <span class="trace-card-meta">
+          <span>${escapeHtml(relativeTime(session.latestAt))}</span>
+          <span>${escapeHtml(traceNote)}</span>
+          <span>${escapeHtml(observationNote)}</span>
+        </span>
+        <span class="arrow" aria-hidden="true">→</span>
+      </a>
+    </li>`;
+}
+
+function renderSessionTrace(trace, session, window, index) {
+  const duration = formatDuration(Date.parse(trace.latestAt) - Date.parse(trace.startedAt));
+  const href = `/traces/${encodeURIComponent(trace.id)}?window=${escapeAttribute(window)}&amp;session=${encodeURIComponent(session.id)}`;
+
+  return `
+    <li class="session-trace-item">
+      <span class="session-trace-index">${index + 1}</span>
+      <a class="session-trace-card" href="${href}">
+        <span>
+          <span class="session-trace-name">${escapeHtml(trace.name)}</span>
+          <span class="mono trace-card-id">${escapeHtml(trace.id)}</span>
+        </span>
+        <span class="session-trace-meta">
+          <span>${escapeHtml(formatDate(trace.startedAt))}</span>
+          <span>${escapeHtml(duration)}</span>
+          <span>${trace.observationCount} observations</span>
+          <span class="level-pill ${escapeAttribute(trace.highestLevel.toLowerCase())}">${escapeHtml(trace.highestLevel)}</span>
+        </span>
+        <span class="arrow" aria-hidden="true">→</span>
+      </a>
+    </li>`;
 }
 
 function renderTraceCard(trace, window) {
@@ -322,7 +506,8 @@ function prettyValue(value) {
     return JSON.stringify(value, null, 2);
   }
   try {
-    return JSON.stringify(JSON.parse(value), null, 2);
+    const parsed = JSON.parse(value);
+    return typeof parsed === "string" ? parsed : JSON.stringify(parsed, null, 2);
   } catch {
     return value;
   }
