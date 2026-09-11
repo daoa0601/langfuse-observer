@@ -17,8 +17,9 @@ const USD_FORMATTER = new Intl.NumberFormat("en", {
 
 export function renderRecentPage(result) {
   const windowLabel = RECENT_WINDOWS[result.window].label;
+  const isLegacy = result.apiVersion === "v3";
   const traces = result.traces.length === 0
-    ? renderEmptyState(windowLabel)
+    ? renderEmptyState(windowLabel, isLegacy)
     : `<ol class="trace-list" data-testid="trace-list">${result.traces.map((trace) => renderTraceCard(trace, result.window)).join("")}</ol>`;
 
   return renderLayout({
@@ -48,18 +49,20 @@ export function renderRecentPage(result) {
               <span class="status-dot" aria-hidden="true"></span>
               <div>
                 <strong>Langfuse connected</strong>
-                <span>Checked ${escapeHtml(formatDate(result.queriedAt))}</span>
+                <span>${escapeHtml(apiLabel(result.apiVersion))} · Checked ${escapeHtml(formatDate(result.queriedAt))}</span>
               </div>
             </div>
             <div class="tip-card">
               <p class="section-label">Known trace?</p>
-              <p>Paste its ID above. Direct lookup searches the last 90 days, even when the trace is outside this window.</p>
+              <p>${isLegacy
+                ? "Paste its ID above. The v3 API retrieves that trace directly."
+                : "Paste its ID above. Direct lookup searches the last 90 days, even when the trace is outside this window."}</p>
             </div>
           </aside>
           <section class="trace-panel" aria-labelledby="recent-heading">
             <div class="panel-heading">
               <div>
-                <p class="section-label">Observation roots</p>
+                <p class="section-label">${isLegacy ? "Legacy trace records" : "Observation roots"}</p>
                 <h2 id="recent-heading">Recent traces</h2>
               </div>
               <span class="count-pill">${result.traces.length} shown</span>
@@ -73,8 +76,9 @@ export function renderRecentPage(result) {
 
 export function renderSessionsPage(result) {
   const windowLabel = RECENT_WINDOWS[result.window].label;
+  const isLegacy = result.apiVersion === "v3";
   const sessions = result.sessions.length === 0
-    ? renderSessionEmptyState(windowLabel)
+    ? renderSessionEmptyState(windowLabel, isLegacy)
     : `<ol class="session-list" data-testid="session-list">${result.sessions.map((session) => renderSessionCard(session, result.window)).join("")}</ol>`;
 
   return renderLayout({
@@ -104,12 +108,14 @@ export function renderSessionsPage(result) {
               <span class="status-dot" aria-hidden="true"></span>
               <div>
                 <strong>Langfuse connected</strong>
-                <span>Checked ${escapeHtml(formatDate(result.queriedAt))}</span>
+                <span>${escapeHtml(apiLabel(result.apiVersion))} · Checked ${escapeHtml(formatDate(result.queriedAt))}</span>
               </div>
             </div>
             <div class="tip-card">
               <p class="section-label">Complete results</p>
-              <p>The viewer follows every Langfuse cursor in this window before it groups sessions.</p>
+              <p>${isLegacy
+                ? "The viewer follows every Langfuse result page in this window."
+                : "The viewer follows every Langfuse cursor in this window before it groups sessions."}</p>
             </div>
           </aside>
           <section class="trace-panel" aria-labelledby="sessions-heading">
@@ -146,7 +152,9 @@ export function renderSessionPage(session, window) {
             <div>
               <p class="eyebrow">Session</p>
               <h1 class="session-title">${escapeHtml(session.id)}</h1>
-              <p class="hero-copy">Every trace discovered for this session during the last 90 days.</p>
+              <p class="hero-copy">${session.apiVersion === "v3"
+                ? "Every trace returned by the v3 session endpoint."
+                : "Every trace discovered for this session during the last 90 days."}</p>
             </div>
           </div>
           <a class="button secondary" href="/sessions?window=${escapeAttribute(window)}">Back to sessions</a>
@@ -156,7 +164,7 @@ export function renderSessionPage(session, window) {
           ${renderStat("Latest activity", formatDate(session.latestAt))}
           ${renderStat("Duration", duration)}
           ${renderStat("Traces", NUMBER_FORMATTER.format(session.traceCount))}
-          ${renderStat("Observations", NUMBER_FORMATTER.format(session.observationCount))}
+          ${renderStat("Observations", formatCount(session.observationCount))}
         </dl>
         <section class="observation-section" aria-labelledby="session-traces-heading">
           <div class="panel-heading">
@@ -179,10 +187,11 @@ export function renderTracePage(trace, window, sessionId = null) {
     (sum, row) => sum + (row.observation.usage.total ?? 0),
     0,
   );
-  const totalCost = trace.rows.reduce(
+  const observationCost = trace.rows.reduce(
     (sum, row) => sum + (row.observation.totalCost ?? row.observation.cost.total ?? 0),
     0,
   );
+  const totalCost = trace.totalCost ?? observationCost;
   const duration = trace.endedAt === null
     ? "In progress"
     : formatDuration(Date.parse(trace.endedAt) - Date.parse(trace.startedAt));
@@ -223,6 +232,7 @@ export function renderTracePage(trace, window, sessionId = null) {
           ${renderStat("Tokens", totalTokens ? NUMBER_FORMATTER.format(totalTokens) : "—")}
           ${renderStat("Cost", totalCost ? USD_FORMATTER.format(totalCost) : "—")}
         </dl>
+        ${renderTraceContext(trace.traceContext)}
         <section class="observation-section" aria-labelledby="observations-heading">
           <div class="panel-heading">
             <div>
@@ -308,29 +318,37 @@ function renderWindowOptions(selectedWindow) {
     .join("");
 }
 
-function renderEmptyState(windowLabel) {
+function renderEmptyState(windowLabel, isLegacy) {
   return `
     <div class="empty-state" data-testid="empty-state">
       <div class="empty-orbit" aria-hidden="true"><span></span></div>
       <h3>No traces in the last ${escapeHtml(windowLabel)}</h3>
-      <p>The connection works. This Langfuse project has no logical root observations in the selected window.</p>
+      <p>The connection works. ${isLegacy
+        ? "This Langfuse project has no trace records in the selected window."
+        : "This Langfuse project has no logical root observations in the selected window."}</p>
     </div>`;
 }
 
-function renderSessionEmptyState(windowLabel) {
+function renderSessionEmptyState(windowLabel, isLegacy) {
   return `
     <div class="empty-state" data-testid="session-empty-state">
       <div class="empty-orbit session-orbit" aria-hidden="true"><span></span></div>
       <h3>No sessions in the last ${escapeHtml(windowLabel)}</h3>
-      <p>The connection works. No observations in this window carry a session ID.</p>
+      <p>The connection works. ${isLegacy
+        ? "This Langfuse project has no sessions created in the selected window."
+        : "No observations in this window carry a session ID."}</p>
     </div>`;
 }
 
 function renderSessionCard(session, window) {
   const levelClass = session.highestLevel.toLowerCase();
   const tags = session.tags.slice(0, 3).map((tag) => `<span class="tag">${escapeHtml(tag)}</span>`).join("");
-  const traceNote = `${session.traceCount} ${session.traceCount === 1 ? "trace" : "traces"}`;
-  const observationNote = `${session.observationCount} ${session.observationCount === 1 ? "observation" : "observations"}`;
+  const traceNote = session.traceCount === null
+    ? "Open to view traces"
+    : `${session.traceCount} ${session.traceCount === 1 ? "trace" : "traces"}`;
+  const observationNote = session.observationCount === null
+    ? "Counts available per trace"
+    : `${session.observationCount} ${session.observationCount === 1 ? "observation" : "observations"}`;
 
   return `
     <li>
@@ -366,7 +384,7 @@ function renderSessionTrace(trace, session, window, index) {
         <span class="session-trace-meta">
           <span>${escapeHtml(formatDate(trace.startedAt))}</span>
           <span>${escapeHtml(duration)}</span>
-          <span>${trace.observationCount} observations</span>
+          <span>${trace.observationCount === null ? "Open for observations" : `${trace.observationCount} observations`}</span>
           <span class="level-pill ${escapeAttribute(trace.highestLevel.toLowerCase())}">${escapeHtml(trace.highestLevel)}</span>
         </span>
         <span class="arrow" aria-hidden="true">→</span>
@@ -377,7 +395,9 @@ function renderSessionTrace(trace, session, window, index) {
 function renderTraceCard(trace, window) {
   const levelClass = trace.highestLevel.toLowerCase();
   const tags = trace.tags.slice(0, 3).map((tag) => `<span class="tag">${escapeHtml(tag)}</span>`).join("");
-  const rootNote = trace.rootCount > 1 ? `${trace.rootCount} logical roots` : "1 logical root";
+  const rootNote = trace.rootCount === null
+    ? "Legacy trace record"
+    : trace.rootCount > 1 ? `${trace.rootCount} logical roots` : "1 logical root";
 
   return `
     <li>
@@ -436,6 +456,48 @@ function renderObservation(row) {
     </details>`;
 }
 
+function renderTraceContext(context) {
+  if (!context) {
+    return "";
+  }
+
+  const fields = [
+    context.userId ? ["User", context.userId] : null,
+    context.environment ? ["Environment", context.environment] : null,
+    context.release ? ["Release", context.release] : null,
+    context.version ? ["Version", context.version] : null,
+    context.tags.length > 0 ? ["Tags", context.tags.join(", ")] : null,
+  ].filter(Boolean);
+  const details = [
+    renderDataBlock("Input", context.input),
+    renderDataBlock("Output", context.output),
+    renderDataBlock("Metadata", context.metadata),
+    fields.length > 0 ? `
+      <dl class="detail-grid">
+        ${fields.map(([label, value]) => `
+          <div>
+            <dt>${escapeHtml(label)}</dt>
+            <dd>${escapeHtml(value)}</dd>
+          </div>`).join("")}
+      </dl>` : "",
+  ].filter(Boolean).join("");
+
+  if (!details) {
+    return "";
+  }
+
+  return `
+    <section class="observation-section trace-context" aria-labelledby="trace-context-heading">
+      <div class="panel-heading">
+        <div>
+          <p class="section-label">Legacy trace fields</p>
+          <h2 id="trace-context-heading">Trace input and output</h2>
+        </div>
+      </div>
+      ${details}
+    </section>`;
+}
+
 function renderDataBlock(label, value) {
   if (value === null || value === undefined) {
     return "";
@@ -483,6 +545,14 @@ function renderKeyValues(observation) {
 
 function renderStat(label, value) {
   return `<div><dt>${escapeHtml(label)}</dt><dd>${escapeHtml(value)}</dd></div>`;
+}
+
+function formatCount(value) {
+  return value === null ? "Available per trace" : NUMBER_FORMATTER.format(value);
+}
+
+function apiLabel(version) {
+  return version === "v3" ? "Self-hosted v3 API" : "v4 Observations API";
 }
 
 function renderLayout({ title, body }) {

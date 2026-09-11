@@ -333,6 +333,10 @@ summary:focus-visible {
   box-shadow: var(--shadow);
 }
 
+.trace-context {
+  margin-bottom: 28px;
+}
+
 .panel-heading {
   display: flex;
   gap: 20px;

@@ -14,12 +14,21 @@ export function loadConfig(env) {
   const port = parsePort(env.PORT);
 
   return Object.freeze({
+    apiVersion: parseApiVersion(env.LANGFUSE_API_VERSION),
     baseUrl,
     publicKey: env.LANGFUSE_PUBLIC_KEY,
     secretKey: env.LANGFUSE_SECRET_KEY,
     host: "127.0.0.1",
     port,
   });
+}
+
+function parseApiVersion(value) {
+  const apiVersion = value?.trim().toLowerCase() || "auto";
+  if (!["auto", "v3", "v4"].includes(apiVersion)) {
+    throw new Error("LANGFUSE_API_VERSION must be auto, v3, or v4");
+  }
+  return apiVersion;
 }
 
 function parseBaseUrl(value) {

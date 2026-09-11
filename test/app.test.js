@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { createServer } from "node:http";
 import test from "node:test";
+import { loadConfig } from "../src/config.js";
 import { createLangfuseObserver } from "../src/langfuse.js";
 import { createRequestHandler } from "../src/server.js";
 
@@ -292,6 +293,173 @@ test("the recent trace page does not silently stop at fifty traces", async (t) =
   assert.match(body, /Visible trace 50/);
 });
 
+test("auto mode falls back to the self-hosted v3 API and remembers it", async (t) => {
+  const requests = [];
+  const app = await startTestApp(t, (request, response) => {
+    const snapshot = requestSnapshot(request);
+    requests.push(snapshot);
+
+    if (snapshot.url.pathname === "/api/public/v2/observations") {
+      sendJson(response, 404, { message: "not found" });
+      return;
+    }
+    if (snapshot.url.pathname === "/api/public/traces") {
+      sendJson(response, 200, legacyPage([
+        legacyTrace({ id: "legacy-trace", name: "GLM agent run" }),
+      ]));
+      return;
+    }
+    if (snapshot.url.pathname === "/api/public/sessions") {
+      sendJson(response, 200, legacyPage([
+        legacySession({ id: "legacy-session" }),
+      ]));
+      return;
+    }
+    sendJson(response, 500, { message: "unexpected route" });
+  });
+
+  const traceResponse = await fetch(`${app.origin}/?window=6h`);
+  const traceBody = await traceResponse.text();
+  const sessionResponse = await fetch(`${app.origin}/sessions?window=6h`);
+  const sessionBody = await sessionResponse.text();
+
+  assert.equal(traceResponse.status, 200);
+  assert.match(traceBody, /GLM agent run/);
+  assert.match(traceBody, /Self-hosted v3 API/);
+  assert.match(traceBody, /Legacy trace record/);
+  assert.equal(sessionResponse.status, 200);
+  assert.match(sessionBody, /legacy-session/);
+  assert.match(sessionBody, /Open to view traces/);
+
+  assert.deepEqual(requests.map((request) => request.url.pathname), [
+    "/api/public/v2/observations",
+    "/api/public/traces",
+    "/api/public/sessions",
+  ]);
+  assert.equal(requests[1].url.searchParams.get("fields"), "core");
+  assert.equal(requests[1].url.searchParams.get("page"), "1");
+  assert.equal(requests[1].url.searchParams.get("limit"), "100");
+  assert.equal(requests[1].url.searchParams.get("fromTimestamp"), "2026-09-10T06:00:00.000Z");
+  assert.equal(requests[1].url.searchParams.get("toTimestamp"), NOW.toISOString());
+  for (const request of requests) {
+    assert.equal(request.authorization, AUTHORIZATION);
+  }
+});
+
+test("the v3 sessions view follows pages and opens all session traces", async (t) => {
+  const requests = [];
+  const app = await startTestApp(t, (request, response) => {
+    const snapshot = requestSnapshot(request);
+    requests.push(snapshot);
+
+    if (snapshot.url.pathname === "/api/public/sessions/session%2Flegacy") {
+      sendJson(response, 200, {
+        ...legacySession({ id: "session/legacy" }),
+        traces: [
+          legacyTrace({ id: "trace-1", name: "First turn", timestamp: "2026-09-10T11:55:00.000Z" }),
+          legacyTrace({ id: "trace-2", name: "Second turn", timestamp: "2026-09-10T11:57:00.000Z" }),
+        ],
+      });
+      return;
+    }
+
+    const page = Number(snapshot.url.searchParams.get("page"));
+    sendJson(response, 200, legacyPage([
+      legacySession({ id: page === 1 ? "session/legacy" : "older-session" }),
+    ], { page, totalItems: 2, totalPages: 2 }));
+  }, { apiVersion: "v3" });
+
+  const listResponse = await fetch(`${app.origin}/sessions?window=24h`);
+  const listBody = await listResponse.text();
+  const detailResponse = await fetch(`${app.origin}/sessions/session%2Flegacy?window=24h`);
+  const detailBody = await detailResponse.text();
+
+  assert.equal(listResponse.status, 200);
+  assert.match(listBody, /session\/legacy/);
+  assert.match(listBody, /older-session/);
+  assert.equal(detailResponse.status, 200);
+  assert.match(detailBody, /First turn/);
+  assert.match(detailBody, /Second turn/);
+  assert.match(detailBody, /2<\/dd>/);
+  assert.match(detailBody, /Available per trace/);
+  assert.match(detailBody, /Open for observations/);
+  assert.match(detailBody, /href="\/traces\/trace-2\?window=24h&amp;session=session%2Flegacy"/);
+  assert.deepEqual(requests.map((request) => request.url.searchParams.get("page")), ["1", "2", null]);
+});
+
+test("the v3 trace view renders trace fields and its complete observation tree", async (t) => {
+  const requests = [];
+  const app = await startTestApp(t, (request, response) => {
+    requests.push(requestSnapshot(request));
+    sendJson(response, 200, {
+      ...legacyTrace({
+        id: "legacy-trace",
+        name: "Legacy checkout agent",
+        sessionId: "legacy-session",
+        tags: ["agent", "glm"],
+      }),
+      input: { prompt: "buy milk" },
+      output: { answer: "done" },
+      metadata: { provider: "GLM" },
+      userId: "local-user",
+      release: "agenttrace-1",
+      version: "3.0",
+      totalCost: 0.000321,
+      latency: 2,
+      observations: [
+        fullObservation({
+          id: "legacy-root",
+          traceId: "legacy-trace",
+          name: "agent run",
+          isRootObservation: undefined,
+          calculatedTotalCost: 0.0002,
+        }),
+        fullObservation({
+          id: "legacy-tool",
+          traceId: "legacy-trace",
+          parentObservationId: "legacy-root",
+          name: "tool output",
+          startTime: "2026-09-10T11:59:01.000Z",
+          calculatedTotalCost: 0.000121,
+        }),
+      ],
+    });
+  }, { apiVersion: "v3" });
+
+  const response = await fetch(`${app.origin}/traces/legacy-trace?window=24h`);
+  const body = await response.text();
+
+  assert.equal(response.status, 200);
+  assert.match(body, /Legacy checkout agent/);
+  assert.match(body, /Trace input and output/);
+  assert.match(body, /&quot;prompt&quot;: &quot;buy milk&quot;/);
+  assert.match(body, /&quot;answer&quot;: &quot;done&quot;/);
+  assert.match(body, /GLM/);
+  assert.match(body, /agenttrace-1/);
+  assert.match(body, /\$0\.000321/);
+  assert.ok(body.indexOf("agent run") < body.indexOf("tool output"));
+  assert.match(body, /class="observation depth-1/);
+  assert.equal(requests.length, 1);
+  assert.equal(requests[0].url.pathname, "/api/public/traces/legacy-trace");
+  assert.equal(requests[0].url.searchParams.get("fields"), "core,io,observations,metrics");
+});
+
+test("config accepts auto, v3, and v4 API selection", () => {
+  const required = {
+    LANGFUSE_PUBLIC_KEY: PUBLIC_KEY,
+    LANGFUSE_SECRET_KEY: SECRET_KEY,
+    LANGFUSE_BASE_URL: "http://langfuse.test",
+  };
+
+  assert.equal(loadConfig(required).apiVersion, "auto");
+  assert.equal(loadConfig({ ...required, LANGFUSE_API_VERSION: "V3" }).apiVersion, "v3");
+  assert.equal(loadConfig({ ...required, LANGFUSE_API_VERSION: "v4" }).apiVersion, "v4");
+  assert.throws(
+    () => loadConfig({ ...required, LANGFUSE_API_VERSION: "v2" }),
+    /must be auto, v3, or v4/,
+  );
+});
+
 test("upstream errors never return credentials or response bodies", async (t) => {
   const app = await startTestApp(t, (_request, response) => {
     sendJson(response, 401, { leaked: SECRET_KEY });
@@ -307,10 +475,11 @@ test("upstream errors never return credentials or response bodies", async (t) =>
   assert.doesNotMatch(body, new RegExp(SECRET_KEY));
 });
 
-async function startTestApp(t, upstreamHandler) {
+async function startTestApp(t, upstreamHandler, { apiVersion } = {}) {
   const upstream = await listen(upstreamHandler);
   const observer = createLangfuseObserver({
     baseUrl: new URL(upstream.origin),
+    apiVersion,
     publicKey: PUBLIC_KEY,
     secretKey: SECRET_KEY,
   }, {
@@ -385,6 +554,40 @@ function fullObservation(overrides = {}) {
     modelParameters: {},
     usageDetails: {},
     costDetails: {},
+    ...overrides,
+  };
+}
+
+function legacyPage(data, overrides = {}) {
+  return {
+    data,
+    meta: {
+      page: 1,
+      limit: 100,
+      totalItems: data.length,
+      totalPages: data.length > 0 ? 1 : 0,
+      ...overrides,
+    },
+  };
+}
+
+function legacyTrace(overrides = {}) {
+  return {
+    id: "legacy-trace",
+    timestamp: "2026-09-10T11:59:00.000Z",
+    name: "Legacy trace",
+    sessionId: "legacy-session",
+    environment: "default",
+    tags: [],
+    ...overrides,
+  };
+}
+
+function legacySession(overrides = {}) {
+  return {
+    id: "legacy-session",
+    createdAt: "2026-09-10T11:50:00.000Z",
+    environment: "default",
     ...overrides,
   };
 }

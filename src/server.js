@@ -230,6 +230,7 @@ function problemFor(error) {
     RATE_LIMITED: [503, "Langfuse rate limit reached", error.message, "Wait a moment before refreshing."],
     TIMEOUT: [504, "Langfuse timed out", error.message, null],
     UNAVAILABLE: [502, "Langfuse unavailable", error.message, null],
+    UNSUPPORTED_API: [502, "Langfuse API version mismatch", error.message, "Set LANGFUSE_API_VERSION=v3 for a self-hosted Langfuse v3 deployment."],
     UPSTREAM_ERROR: [502, "Langfuse request failed", error.message, null],
     INVALID_RESPONSE: [502, "Unexpected Langfuse response", error.message, null],
     RESULT_TOO_LARGE: [413, "Trace is too large", error.message, null],
