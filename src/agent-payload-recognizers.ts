@@ -25,6 +25,13 @@ import type {
 } from "./agent-payload-types.ts";
 import { isJsonObject, isJsonString, type JsonObject } from "./json.ts";
 import type { JsonValue } from "./observer-types.ts";
+import {
+  isPydanticAiMessage,
+  isPydanticAiMessageArray,
+  parsePydanticAiMessage,
+  parsePydanticAiMessages,
+  type PydanticAiMessage,
+} from "./pydantic-ai-parser.ts";
 
 export type RecognizedDocument = Readonly<{
   recognizer: Recognizer;
@@ -46,6 +53,17 @@ export function recognizeDocument(
 
   if (!isJsonObject(value)) {
     return null;
+  }
+
+  if (isPydanticAiMessage(value)) {
+    const placement =
+      field === "output" && value.kind === "response" ? "output-reply" : "input-context";
+
+    const recognizer = "pydantic-ai-messages";
+    const context = createParseContext(source.origin, field, recognizer, decodedLayers, budget);
+    const parsed = parsePydanticAiMessage(value, "", placement, context);
+
+    return { recognizer, messages: parsed.messages, tools: [], issues: parsed.issues };
   }
 
   if (field === "output" && Array.isArray(value["choices"])) {
@@ -84,6 +102,12 @@ function recognizeArray(
 ): RecognizedDocument | null {
   const first = value[0];
 
+  if (isPydanticAiMessageArray(value)) {
+    const placement = field === "input" ? "input-context" : "output-conversation";
+
+    return parsePydanticDocument(source.origin, field, value, placement, decodedLayers, budget);
+  }
+
   if (
     field === "output" &&
     source.origin.kind === "observation" &&
@@ -117,6 +141,21 @@ function recognizeArray(
     tools: [],
     issues: parsed.issues,
   };
+}
+
+function parsePydanticDocument(
+  origin: PayloadOrigin,
+  field: "input" | "output",
+  value: readonly PydanticAiMessage[],
+  placement: "input-context" | "output-conversation" | "output-reply",
+  decodedLayers: 0 | 1 | 2,
+  budget: InspectionBudget,
+): RecognizedDocument {
+  const recognizer = "pydantic-ai-messages";
+  const context = createParseContext(origin, field, recognizer, decodedLayers, budget);
+  const parsed = parsePydanticAiMessages(value, "", placement, context);
+
+  return { recognizer, messages: parsed.messages, tools: [], issues: parsed.issues };
 }
 
 function parseMessageRequest(

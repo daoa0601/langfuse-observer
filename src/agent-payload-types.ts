@@ -29,6 +29,7 @@ export type Recognizer =
   | "openai-responses-response"
   | "anthropic-request"
   | "anthropic-response"
+  | "pydantic-ai-messages"
   | "assistant-output"
   | "plain-text";
 

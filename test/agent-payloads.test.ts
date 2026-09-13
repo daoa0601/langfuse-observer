@@ -181,6 +181,90 @@ test("parses OpenAI Responses and Anthropic payloads", () => {
   assert.equal(itemAt(itemAt(anthropic.replies, 0).parts, 0).kind, "tool-call");
 });
 
+test("parses Pydantic AI model messages and their system prompt", () => {
+  const report = inspectAgentPayloads([
+    modelTurn({
+      input: [
+        {
+          kind: "request",
+          parts: [
+            { part_kind: "system-prompt", content: "Follow the refund policy." },
+            { part_kind: "user-prompt", content: "My parcel is broken." },
+          ],
+        },
+        {
+          kind: "response",
+          parts: [
+            {
+              part_kind: "tool-call",
+              tool_name: "lookup_order",
+              args: { order_id: "42" },
+              tool_call_id: "call-1",
+            },
+          ],
+        },
+        {
+          kind: "request",
+          parts: [
+            {
+              part_kind: "tool-return",
+              tool_name: "lookup_order",
+              content: { status: "damaged" },
+              tool_call_id: "call-1",
+            },
+          ],
+        },
+      ],
+      output: {
+        kind: "response",
+        parts: [{ part_kind: "text", content: "Please send a photo." }],
+      },
+    }),
+  ]);
+
+  const turn = itemAt(report.turns, 0);
+  assert.notEqual(turn.kind, "unrecognized");
+
+  if (turn.kind === "unrecognized") {
+    throw new Error("Expected Pydantic AI messages to parse");
+  }
+
+  assert.equal(report.coverage, "complete");
+  assert.equal(textOf(itemAt(turn.prompts, 0).parts), "Follow the refund policy.");
+  assert.deepEqual(
+    turn.inputContext.flatMap((message) => message.parts.map((part) => part.kind)),
+    ["text", "tool-call", "tool-result"],
+  );
+  assert.equal(textOf(itemAt(turn.replies, 0).parts), "Please send a photo.");
+  assert.equal(itemAt(turn.replies, 0).evidence.pointer, "/parts/0");
+  assert.equal(itemAt(turn.prompts, 0).evidence.recognizer, "pydantic-ai-messages");
+});
+
+test("parses Pydantic AI role messages whose text is stored in parts", () => {
+  const report = inspectAgentPayloads([
+    source({
+      role: "agent-context",
+      input: [
+        { role: "system", content: "Use the account policy." },
+        { role: "user", parts: [{ type: "text", content: "Cancel my account." }] },
+        { role: "assistant", parts: [{ type: "text", content: "I need confirmation." }] },
+      ],
+    }),
+  ]);
+
+  const input = itemAt(report.contextSources, 0).input;
+  assert.equal(input.kind, "recognized");
+  assert.equal(report.coverage, "complete");
+  assert.deepEqual(
+    input.messages.map((message) => [message.role, textOf(message.parts)]),
+    [
+      ["system", "Use the account policy."],
+      ["user", "Cancel my account."],
+      ["assistant", "I need confirmation."],
+    ],
+  );
+});
+
 test("keeps Responses tool calls and results in input context", () => {
   const report = inspectAgentPayloads([
     modelTurn({
@@ -553,7 +637,9 @@ function modelTurn(
   };
 }
 
-function source(values: Readonly<{ role: PayloadSourceRole; input: string }>): AgentPayloadSource {
+function source(
+  values: Readonly<{ role: PayloadSourceRole; input: JsonValue }>,
+): AgentPayloadSource {
   return {
     origin: {
       kind: "observation",

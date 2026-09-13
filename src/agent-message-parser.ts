@@ -160,6 +160,11 @@ export function parseMessage(
 
   const issues: ExtractionIssue[] = [];
   const contentLimitHits = context.budget.contentLimitHits;
+
+  const contentField =
+    value["content"] === undefined && value["parts"] !== undefined ? "parts" : "content";
+
+  const content = value[contentField];
   let parts: ContentPart[];
 
   if (role === "tool") {
@@ -167,12 +172,7 @@ export function parseMessage(
       {
         kind: "tool-result",
         callId: stringValue(value["tool_call_id"]) ?? stringValue(value["tool_use_id"]),
-        value: excerptValue(
-          value["content"],
-          joinPointer(pointer, "content"),
-          context.budget,
-          issues,
-        ),
+        value: excerptValue(content, joinPointer(pointer, contentField), context.budget, issues),
         isError: booleanValue(value["is_error"]),
       },
       context,
@@ -180,7 +180,7 @@ export function parseMessage(
 
     parts = part === null ? [] : [part];
   } else {
-    parts = parseContent(value["content"], joinPointer(pointer, "content"), context, issues);
+    parts = parseContent(content, joinPointer(pointer, contentField), context, issues);
   }
 
   const toolCalls = value["tool_calls"];
@@ -299,7 +299,7 @@ export function parseContentBlock(
   const blockKind = contentBlockKind(type);
 
   if (blockKind === "text") {
-    const text = stringValue(value["text"]);
+    const text = stringValue(value["text"]) ?? stringValue(value["content"]);
 
     if (text === null) {
       issues.push(malformedIssue(pointer, `${type} block is missing text.`));
