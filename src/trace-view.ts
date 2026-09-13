@@ -74,35 +74,33 @@ export function renderTracePage(
   return renderLayout({
     title: trace.name,
     body: `
-      <main class="page-shell detail-shell">
+      <main class="page-shell detail-shell trace-page-shell">
         ${renderTopBar("traces", window)}
-        <nav class="breadcrumbs" aria-label="Breadcrumb">
-          <a href="${backHref}">${escapeHtml(backLabel)}</a>
-          <span aria-hidden="true">/</span>
-          <span>Trace detail</span>
-        </nav>
-        <section class="trace-hero">
-          <div class="trace-heading">
-            <div class="trace-mark" aria-hidden="true"></div>
-            <div>
+        <div class="trace-workspace${hasAgentSidebar ? "" : " no-agent-sidebar"}">
+          <aside class="trace-summary-sidebar" aria-labelledby="trace-heading">
+            <nav class="breadcrumbs trace-breadcrumbs" aria-label="Breadcrumb">
+              <a href="${backHref}">${escapeHtml(backLabel)}</a>
+              <span aria-hidden="true">/</span>
+              <span>Trace</span>
+            </nav>
+            <section class="trace-summary">
               <p class="eyebrow">Trace</p>
-              <h1>${escapeHtml(trace.name)}</h1>
+              <h1 id="trace-heading">${escapeHtml(trace.name)}</h1>
               <p class="mono trace-id">${escapeHtml(trace.id)}</p>
-              ${sessionLinks}
-            </div>
-          </div>
-          <a class="button secondary" href="${backHref}">Back to ${escapeHtml(backLabel.toLowerCase())}</a>
-        </section>
-        <dl class="stats-grid">
-          ${renderStat("Started", formatDate(trace.startedAt))}
-          ${renderStat("Duration", duration)}
-          ${renderStat("Observations", NUMBER_FORMATTER.format(trace.observationCount))}
-          ${renderStat("Tokens", totalTokens === null ? "—" : NUMBER_FORMATTER.format(totalTokens))}
-          ${renderStat("Cost", totalCost === null ? "—" : USD_FORMATTER.format(totalCost))}
-        </dl>
-        ${renderQueryScope(trace.queryScope)}
-        ${renderTraceContext(trace.apiVersion === "v3" ? trace.traceContext : null)}
-        <div class="trace-detail-grid${hasAgentSidebar ? "" : " single-column"}">
+              ${sessionLinks ? `<div class="trace-session-links">${sessionLinks}</div>` : ""}
+            </section>
+            <dl class="trace-stats">
+              ${renderStat("Started", formatDate(trace.startedAt))}
+              ${renderStat("Duration", duration)}
+              ${renderStat("Observations", NUMBER_FORMATTER.format(trace.observationCount))}
+              ${renderStat("Tokens", totalTokens === null ? "—" : NUMBER_FORMATTER.format(totalTokens))}
+              ${renderStat("Cost", totalCost === null ? "—" : USD_FORMATTER.format(totalCost))}
+            </dl>
+            ${renderQueryScope(trace.queryScope)}
+            <a class="trace-back-link" href="${backHref}">← Back to ${escapeHtml(backLabel.toLowerCase())}</a>
+          </aside>
+          <div class="trace-main-column">
+            ${renderTraceContext(trace.apiVersion === "v3" ? trace.traceContext : null)}
           <section class="observation-section" aria-labelledby="observations-heading">
             <div class="panel-heading">
               <div>
@@ -123,6 +121,7 @@ export function renderTracePage(
                 .join("")}
             </div>
           </section>
+          </div>
           ${hasAgentSidebar ? renderAgentSidebar(agent, trace.rows) : ""}
         </div>
       </main>`,
@@ -156,7 +155,7 @@ function renderObservation(row: ObservationRow, targetId: string, turn: AgentTur
   const turnBadges = turn === null ? "" : renderTurnBadges(turn);
 
   return `
-    <details id="${escapeAttribute(targetId)}" class="observation depth-${depth} level-${escapeAttribute(observation.level.toLowerCase())}${turnClasses}"${depth === 0 ? " open" : ""}>
+    <details id="${escapeAttribute(targetId)}" class="observation depth-${depth} level-${escapeAttribute(observation.level.toLowerCase())}${turnClasses}">
       <summary>
         <span class="observation-node" aria-hidden="true"></span>
         <span class="observation-type">${escapeHtml(observation.type)}</span>

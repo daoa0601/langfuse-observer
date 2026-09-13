@@ -222,6 +222,9 @@ test("trace detail lists agent prompts and tools and marks each model turn", asy
   const body = await response.text();
 
   assert.equal(response.status, 200);
+  assert.match(body, /class="trace-workspace/);
+  assert.match(body, /class="trace-summary-sidebar"/);
+  assert.match(body, /class="trace-main-column"/);
   assert.match(body, /id="agent-context-heading">Agent context/);
   assert.match(body, /System prompt/);
   assert.match(body, /Keep purchases under &lt;50&gt; euros/);
@@ -238,6 +241,42 @@ test("trace detail lists agent prompts and tools and marks each model turn", asy
   assert.match(body, /I will search &lt;script&gt;alert\(1\)&lt;\/script&gt;/);
   assert.doesNotMatch(body, /<script>alert\(1\)<\/script>/);
   assert.match(response.headers.get("content-security-policy") ?? "", /script-src 'none'/);
+});
+
+test("trace detail renders Pydantic AI system prompts", async (t) => {
+  const app = await startTestApp(t, (_request, response) => {
+    sendJson(response, 200, {
+      data: [
+        fullObservation({
+          id: "pydantic-generation",
+          type: "GENERATION",
+          name: "agent run",
+          model: "test-model",
+          input: [
+            {
+              kind: "request",
+              parts: [
+                { part_kind: "system-prompt", content: "Never claim a refund is complete." },
+                { part_kind: "user-prompt", content: "Refund this order." },
+              ],
+            },
+          ],
+          output: {
+            kind: "response",
+            parts: [{ part_kind: "text", content: "What is the order number?" }],
+          },
+        }),
+      ],
+      meta: {},
+    });
+  });
+
+  const response = await fetch(`${app.origin}/traces/trace-1`);
+  const body = await response.text();
+
+  assert.equal(response.status, 200);
+  assert.match(body, /Never claim a refund is complete/);
+  assert.match(body, /What is the order number/);
 });
 
 test("trace detail shows parsing notes when no agent shape is recognized", async (t) => {
