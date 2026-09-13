@@ -152,7 +152,7 @@ test("trace detail follows cursors and renders physical parent order", async (t)
   assert.match(body, /Totals and parent relationships may be partial/);
   assert.match(body, /<dl class="detail-grid">/);
   assert.doesNotMatch(body, /<section class="detail-grid">/);
-  assert.match(body, /class="observation depth-1/);
+  assert.match(body, /class="observation-tree-item depth-1/);
   assert.equal(requests.length, 2);
   assert.equal(itemAt(requests, 1).url.searchParams.get("cursor"), "next-page");
 
@@ -223,7 +223,8 @@ test("trace detail lists agent prompts and tools and marks each model turn", asy
 
   assert.equal(response.status, 200);
   assert.match(body, /class="trace-workspace/);
-  assert.match(body, /class="trace-summary-sidebar"/);
+  assert.match(body, /class="trace-tree-sidebar"/);
+  assert.match(body, /class="trace-content-columns/);
   assert.match(body, /class="trace-main-column"/);
   assert.match(body, /id="agent-context-heading">Agent context/);
   assert.match(body, /System prompt/);
@@ -786,7 +787,7 @@ test("v4 rejects a malformed semantic observation field", async (t) => {
   assert.match(body, /invalid observation parentObservationId/);
 });
 
-test("v4 preserves arbitrary JSON metadata and model parameters", async (t) => {
+test("trace detail hides observation metadata and renders model parameters", async (t) => {
   const app = await startTestApp(t, (_request, response) => {
     sendJson(response, 200, {
       data: [
@@ -803,7 +804,7 @@ test("v4 preserves arbitrary JSON metadata and model parameters", async (t) => {
   const body = await response.text();
 
   assert.equal(response.status, 200);
-  assert.match(body, /captured/);
+  assert.doesNotMatch(body, /captured/);
   assert.match(body, /temperature/);
 });
 
@@ -1071,12 +1072,12 @@ test("the v3 trace view renders trace fields and its complete observation tree",
   assert.match(body, /Trace input and output/);
   assert.match(body, /&quot;prompt&quot;: &quot;buy milk&quot;/);
   assert.match(body, /&quot;answer&quot;: &quot;done&quot;/);
-  assert.match(body, /GLM/);
+  assert.doesNotMatch(body, /GLM/);
   assert.match(body, /agenttrace-1/);
   assert.match(body, /\$0\.000321/);
   assert.doesNotMatch(body, /This detail is limited to observations started between/);
   assert.ok(body.indexOf("agent run") < body.indexOf("tool output"));
-  assert.match(body, /class="observation depth-1/);
+  assert.match(body, /class="observation-tree-item depth-1/);
   assert.equal(requests.length, 1);
   assert.equal(itemAt(requests, 0).url.pathname, "/api/public/traces/legacy-trace");
   assert.equal(itemAt(requests, 0).url.searchParams.get("fields"), "core,io,observations,metrics");

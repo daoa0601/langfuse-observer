@@ -76,66 +76,101 @@ export function renderTracePage(
     body: `
       <main class="page-shell detail-shell trace-page-shell">
         ${renderTopBar("traces", window)}
-        <div class="trace-workspace${hasAgentSidebar ? "" : " no-agent-sidebar"}">
-          <aside class="trace-summary-sidebar" aria-labelledby="trace-heading">
+        <header class="trace-compact-header">
+          <div class="trace-identity">
             <nav class="breadcrumbs trace-breadcrumbs" aria-label="Breadcrumb">
               <a href="${backHref}">${escapeHtml(backLabel)}</a>
               <span aria-hidden="true">/</span>
               <span>Trace</span>
             </nav>
-            <section class="trace-summary">
-              <p class="eyebrow">Trace</p>
-              <h1 id="trace-heading">${escapeHtml(trace.name)}</h1>
+            <h1 id="trace-heading">${escapeHtml(trace.name)}</h1>
+            <div class="trace-identity-meta">
               <p class="mono trace-id">${escapeHtml(trace.id)}</p>
               ${sessionLinks ? `<div class="trace-session-links">${sessionLinks}</div>` : ""}
-            </section>
-            <dl class="trace-stats">
-              ${renderStat("Started", formatDate(trace.startedAt))}
-              ${renderStat("Duration", duration)}
-              ${renderStat("Observations", NUMBER_FORMATTER.format(trace.observationCount))}
-              ${renderStat("Tokens", totalTokens === null ? "—" : NUMBER_FORMATTER.format(totalTokens))}
-              ${renderStat("Cost", totalCost === null ? "—" : USD_FORMATTER.format(totalCost))}
-            </dl>
-            ${renderQueryScope(trace.queryScope)}
-            <a class="trace-back-link" href="${backHref}">← Back to ${escapeHtml(backLabel.toLowerCase())}</a>
-          </aside>
-          <div class="trace-main-column">
-            ${renderTraceContext(trace.apiVersion === "v3" ? trace.traceContext : null)}
-          <section class="observation-section" aria-labelledby="observations-heading">
-            <div class="panel-heading">
+            </div>
+          </div>
+          <dl class="trace-stats">
+            ${renderStat("Started", formatDate(trace.startedAt))}
+            ${renderStat("Duration", duration)}
+            ${renderStat("Observations", NUMBER_FORMATTER.format(trace.observationCount))}
+            ${renderStat("Tokens", totalTokens === null ? "—" : NUMBER_FORMATTER.format(totalTokens))}
+            ${renderStat("Cost", totalCost === null ? "—" : USD_FORMATTER.format(totalCost))}
+          </dl>
+        </header>
+        <div class="trace-workspace">
+          <aside class="trace-tree-sidebar" aria-labelledby="observations-heading">
+            <div class="trace-tree-heading">
               <div>
                 <p class="section-label">Physical parent tree</p>
                 <h2 id="observations-heading">Observations</h2>
               </div>
-              <p class="tree-hint">Open a row to inspect input, output, and metadata.</p>
+              <span class="count-pill">${NUMBER_FORMATTER.format(trace.observationCount)}</span>
             </div>
-            <div class="observation-tree" data-testid="observation-tree">
+            <ol class="observation-tree-nav" data-testid="observation-tree">
               ${trace.rows
                 .map((row, index) =>
-                  renderObservation(
+                  renderObservationTreeItem(
                     row,
                     `observation-${index + 1}`,
                     turnByObservationId.get(row.observation.id) ?? null,
                   ),
                 )
                 .join("")}
-            </div>
-          </section>
+            </ol>
+            ${renderQueryScope(trace.queryScope)}
+            <a class="trace-back-link" href="${backHref}">← Back to ${escapeHtml(backLabel.toLowerCase())}</a>
+          </aside>
+          <div class="trace-content-columns${hasAgentSidebar ? "" : " no-agent-sidebar"}">
+            <section class="trace-main-column" aria-labelledby="observation-data-heading">
+              ${renderTraceContext(trace.apiVersion === "v3" ? trace.traceContext : null)}
+              <div class="panel-heading">
+                <div>
+                  <p class="section-label">Observation payloads</p>
+                  <h2 id="observation-data-heading">Input and output</h2>
+                </div>
+                <p class="tree-hint">Use the tree to jump to an observation.</p>
+              </div>
+              <div class="observation-detail-list">
+                ${trace.rows
+                  .map((row, index) =>
+                    renderObservation(
+                      row,
+                      `observation-${index + 1}`,
+                      turnByObservationId.get(row.observation.id) ?? null,
+                    ),
+                  )
+                  .join("")}
+              </div>
+            </section>
+            ${hasAgentSidebar ? renderAgentSidebar(agent, trace.rows) : ""}
           </div>
-          ${hasAgentSidebar ? renderAgentSidebar(agent, trace.rows) : ""}
         </div>
       </main>`,
   });
 }
 
-function renderObservation(row: ObservationRow, targetId: string, turn: AgentTurn | null): string {
+function renderObservationTreeItem(
+  row: ObservationRow,
+  targetId: string,
+  turn: AgentTurn | null,
+): string {
   const observation = row.observation;
   const depth = Math.min(row.depth, 8);
 
-  const duration =
-    observation.endTime === null
-      ? "In progress"
-      : formatDuration(Date.parse(observation.endTime) - Date.parse(observation.startTime));
+  return `
+    <li class="observation-tree-item depth-${depth}">
+      <a href="#${escapeAttribute(targetId)}">
+        <span class="observation-node" aria-hidden="true"></span>
+        <span class="observation-tree-type">${escapeHtml(observation.type)}</span>
+        <span class="observation-tree-name">${escapeHtml(observation.name || "Unnamed observation")}</span>
+        ${turn === null ? "" : `<span class="observation-tree-turn">Turn ${turn.number}</span>`}
+      </a>
+    </li>`;
+}
+
+function renderObservation(row: ObservationRow, targetId: string, turn: AgentTurn | null): string {
+  const observation = row.observation;
+  const duration = observationDuration(observation);
 
   const relation =
     row.relation === "child" || row.relation === "root"
@@ -145,7 +180,6 @@ function renderObservation(row: ObservationRow, targetId: string, turn: AgentTur
   const detailSections = [
     renderDataBlock("Input", observation.input),
     renderDataBlock("Output", observation.output),
-    renderDataBlock("Metadata", observation.metadata),
     renderKeyValues(observation),
   ]
     .filter(Boolean)
@@ -155,7 +189,7 @@ function renderObservation(row: ObservationRow, targetId: string, turn: AgentTur
   const turnBadges = turn === null ? "" : renderTurnBadges(turn);
 
   return `
-    <details id="${escapeAttribute(targetId)}" class="observation depth-${depth} level-${escapeAttribute(observation.level.toLowerCase())}${turnClasses}">
+    <details id="${escapeAttribute(targetId)}" class="observation observation-detail level-${escapeAttribute(observation.level.toLowerCase())}${turnClasses}">
       <summary>
         <span class="observation-node" aria-hidden="true"></span>
         <span class="observation-type">${escapeHtml(observation.type)}</span>
@@ -177,6 +211,12 @@ function renderObservation(row: ObservationRow, targetId: string, turn: AgentTur
         ${detailSections || `<p class="muted">No additional fields for this observation.</p>`}
       </div>
     </details>`;
+}
+
+function observationDuration(observation: FullObservation): string {
+  return observation.endTime === null
+    ? "In progress"
+    : formatDuration(Date.parse(observation.endTime) - Date.parse(observation.startTime));
 }
 
 function collectAgentPayloadSources(trace: TraceDetail): AgentPayloadSource[] {
@@ -238,7 +278,6 @@ function renderTraceContext(context: TraceContext | null): string {
   const details = [
     renderDataBlock("Input", context.input),
     renderDataBlock("Output", context.output),
-    renderDataBlock("Metadata", context.metadata),
     fields.length > 0
       ? `
       <dl class="detail-grid">
