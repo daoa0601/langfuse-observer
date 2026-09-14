@@ -2,6 +2,8 @@ import { readFile } from "node:fs/promises";
 import type { IncomingMessage, RequestListener, ServerResponse } from "node:http";
 import { fileURLToPath } from "node:url";
 import { ObserverError } from "./langfuse.ts";
+import { parseRecentTraceRequest } from "./recent-trace-filter-query.ts";
+import { prepareRecentTracePage } from "./recent-trace-filters.ts";
 import { parseRecentWindow, parseSessionId, parseTraceId } from "./trace-model.ts";
 import {
   renderProblemPage,
@@ -137,16 +139,32 @@ async function showRecent(
   url: URL,
   context: ObserverContext,
 ): Promise<void> {
-  const window = readRecentWindow(url);
+  const parsed = parseRecentTraceRequest(url.searchParams);
 
-  if (window === null) {
-    sendInvalidWindow(response);
+  if (parsed.kind === "invalid") {
+    sendProblem(response, {
+      status: 400,
+      title: "Invalid trace filter",
+      message: parsed.message,
+    });
 
     return;
   }
 
-  const result = await observer.listRecentTraces(window, context);
-  sendHtml(response, 200, renderRecentPage(result));
+  const result = await observer.listRecentTraces(parsed.request.window, context);
+  const prepared = prepareRecentTracePage(result, parsed.request.filters);
+
+  if (prepared.kind === "unsupported") {
+    sendProblem(response, {
+      status: 400,
+      title: "Unsupported trace filter",
+      message: unsupportedTraceFilterMessage(prepared.fields),
+    });
+
+    return;
+  }
+
+  sendHtml(response, 200, renderRecentPage(prepared.page));
 }
 
 async function showSessions(
@@ -329,6 +347,18 @@ function sendInvalidWindow(response: ServerResponse): void {
     title: "Invalid recent window",
     message: "Choose 1h, 6h, 24h, 7d, 30d, or 90d.",
   });
+}
+
+function unsupportedTraceFilterMessage(
+  fields: readonly ["level"] | readonly ["status"] | readonly ["level", "status"],
+): string {
+  if (fields.length === 2) {
+    return "Highest level and run state filtering require the v4 observations API.";
+  }
+
+  return fields[0] === "level"
+    ? "Highest level filtering requires the v4 observations API."
+    : "Run state filtering requires the v4 observations API.";
 }
 
 function createRequestContext(

@@ -23,7 +23,7 @@ observer.getTrace(traceId, { signal });
 observer.getSession(sessionId, { signal });
 ```
 
-`src/langfuse.ts` selects an API version and exposes the observer interface. `src/langfuse-v4.ts` reads `/api/public/v2/observations`. `src/langfuse-v3.ts` reads the legacy trace and session endpoints. `src/langfuse-api.ts` owns Basic authentication and validates values shared by both adapters. `src/json.ts` converts untyped response data to the recursive `JsonValue` domain type. `src/server.ts` owns HTTP routing and safe error pages. `src/views.ts` renders trace and session lists. `src/trace-view.ts` renders trace details and raw payloads. `src/view-helpers.ts` holds shared HTML escaping, date formatting, and page layout.
+`src/langfuse.ts` selects an API version and exposes the observer interface. `src/langfuse-v4.ts` reads `/api/public/v2/observations`. `src/langfuse-v3.ts` reads the legacy trace and session endpoints. `src/langfuse-api.ts` owns Basic authentication and validates values shared by both adapters. `src/json.ts` converts untyped response data to the recursive `JsonValue` domain type. `src/server.ts` owns HTTP routing and safe error pages. `src/views.ts` renders trace and session lists. `src/trace-view.ts` renders trace details and raw payloads. `src/recent-trace-filter-query.ts` validates filter query parameters. `src/recent-trace-filters.ts` filters normalized trace summaries and builds filter options. `src/trace-filter-view.ts` renders the native GET form. `src/view-helpers.ts` holds shared HTML escaping, date formatting, and page layout.
 
 The agent parser has separate jobs. `src/agent-payload-recognizers.ts` selects a supported provider format. `src/agent-message-parser.ts` reads messages, content blocks, tool calls, and declarations. `src/agent-payloads.ts` assembles model turns. `src/agent-payload-types.ts` defines the result. `src/agent-sidebar.ts` renders it.
 
@@ -32,6 +32,8 @@ Each `GENERATION` observation defines one model turn. Input messages provide con
 Observation input and output stay as structured `JsonValue` data after the HTTP boundary. The parser only decodes JSON text when Langfuse stored the field as a string. It accepts complete top-level shapes instead of searching nested objects for keys such as `role` or `tools`. Each extracted prompt, tool, message, and reply records its source field and JSON Pointer. Fixed limits bound the source size, depth, node count, message count, tool count, content count, and extracted text. A failed or partial parse does not hide the raw observation.
 
 Recent views accept `1h`, `6h`, `24h`, `7d`, `30d`, or `90d`. Direct v4 lookup uses a fixed 90-day range and carries those bounds into the rendered result. V4 lists follow cursors. V3 lists follow numbered pages. The viewer returns an explicit error if a query crosses its row or page budget rather than presenting partial results as complete.
+
+The recent trace page filters normalized summaries only after it reads every result page in the selected window. Search, environment, and tag filters work with both API versions. Highest-level and running-state filters work only with v4 because the v3 trace list does not provide those facts. The filter URL is parsed before the observer call, and the native GET form works without browser JavaScript.
 
 The HTTP boundary gives each viewer request one 30-second deadline and cancels the upstream read when the browser disconnects. The requester also caps each Langfuse page request at 10 seconds. Both constraints use the same signal passed through the observer interface.
 
@@ -46,6 +48,7 @@ The project has no production dependencies or emitted JavaScript tree. Bun execu
 ## Tradeoffs
 
 - The app accepts full-page refreshes in exchange for no client runtime.
+- Recent trace filters do not reduce Langfuse bandwidth. They preserve complete trace summaries and identical matching rules across API versions.
 - The agent sidebar favors strict recognition over extracting every custom provider payload. Unrecognized JSON stays visible in the observation and appears in the parser notes.
 - Recent browsing only includes traces with a logical root in the selected window. Direct lookup still finds a known trace ID.
 - V4 trace and session lookup only search 90 days. Detail pages state that range and warn that totals and parent relationships can be partial.

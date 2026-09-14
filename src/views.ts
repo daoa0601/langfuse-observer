@@ -1,5 +1,4 @@
 import type {
-  ApiVersion,
   CurrentRecentTrace,
   CurrentSessionSummary,
   CurrentSessionTrace,
@@ -8,12 +7,14 @@ import type {
   LegacySessionTrace,
   Problem,
   RecentSessionsResult,
-  RecentTracesResult,
   RecentWindow,
   SessionDetail,
 } from "./observer-types.ts";
+import type { RecentTracePage } from "./recent-trace-filters.ts";
 import { RECENT_WINDOWS } from "./trace-model.ts";
+import { renderTraceFilterSidebar } from "./trace-filter-view.ts";
 import {
+  apiLabel,
   escapeAttribute,
   escapeHtml,
   formatDate,
@@ -24,65 +25,49 @@ import {
   renderQueryScope,
   renderStat,
   renderTopBar,
+  renderWindowOptions,
 } from "./view-helpers.ts";
 
 export { renderTracePage } from "./trace-view.ts";
 
-export function renderRecentPage(result: RecentTracesResult): string {
-  const windowLabel = RECENT_WINDOWS[result.window].label;
-  const isLegacy = result.apiVersion === "v3";
+export function renderRecentPage(page: RecentTracePage): string {
+  const windowLabel = RECENT_WINDOWS[page.window].label;
+  const isLegacy = page.apiVersion === "v3";
 
   const traces =
-    result.traces.length === 0
+    page.totalTraceCount === 0
       ? renderEmptyState(windowLabel, isLegacy)
-      : `<ol class="trace-list" data-testid="trace-list">${result.traces.map((trace) => renderTraceCard(trace, result.window)).join("")}</ol>`;
+      : page.traces.length === 0
+        ? renderFilteredEmptyState(page.window)
+        : `<ol class="trace-list" data-testid="trace-list">${page.traces.map((trace) => renderTraceCard(trace, page.window)).join("")}</ol>`;
+
+  const countLabel =
+    page.traces.length === page.totalTraceCount
+      ? `${page.totalTraceCount} shown`
+      : `${page.traces.length} of ${page.totalTraceCount} shown`;
 
   return renderLayout({
     title: "Recent traces",
     body: `
       <main class="page-shell">
-        ${renderTopBar("traces", result.window)}
-        <section class="hero compact-hero">
+        ${renderTopBar("traces", page.window)}
+        <section class="trace-list-header">
           <div>
-            <p class="eyebrow">Read-only local viewer</p>
-            <h1>See what your agent did.</h1>
-            <p class="hero-copy">Trace data comes straight from Langfuse. Your credentials stay in this process.</p>
+            <p class="eyebrow">Recent traces</p>
+            <h1>Find the run you need.</h1>
+            <p class="hero-copy">Filter the complete result returned for this time window.</p>
           </div>
-          ${renderLookupForm(result.window)}
+          ${renderLookupForm(page.window)}
         </section>
-        <section class="workspace">
-          <aside class="control-panel" aria-label="Trace controls">
-            <div>
-              <p class="section-label">Recent window</p>
-              <form class="window-form" method="get" action="/">
-                <label class="sr-only" for="window">Recent window</label>
-                <select id="window" name="window">${renderWindowOptions(result.window)}</select>
-                <button class="button secondary" type="submit">Refresh</button>
-              </form>
-            </div>
-            <div class="connection-card">
-              <span class="status-dot" aria-hidden="true"></span>
-              <div>
-                <strong>Langfuse connected</strong>
-                <span>${escapeHtml(apiLabel(result.apiVersion))} · Checked ${escapeHtml(formatDate(result.queriedAt))}</span>
-              </div>
-            </div>
-            <div class="tip-card">
-              <p class="section-label">Known trace?</p>
-              <p>${
-                isLegacy
-                  ? "Paste its ID above. The v3 API retrieves that trace directly."
-                  : "Paste its ID above. Direct lookup searches the last 90 days, even when the trace is outside this window."
-              }</p>
-            </div>
-          </aside>
+        <section class="workspace trace-filter-workspace">
+          ${renderTraceFilterSidebar(page)}
           <section class="trace-panel" aria-labelledby="recent-heading">
             <div class="panel-heading">
               <div>
                 <p class="section-label">${isLegacy ? "Legacy trace records" : "Observation roots"}</p>
                 <h2 id="recent-heading">Recent traces</h2>
               </div>
-              <span class="count-pill">${result.traces.length} shown</span>
+              <span class="count-pill">${escapeHtml(countLabel)}</span>
             </div>
             ${traces}
           </section>
@@ -255,16 +240,6 @@ function renderSessionLookupForm(window: RecentWindow): string {
     </form>`;
 }
 
-function renderWindowOptions(selectedWindow: RecentWindow): string {
-  return Object.entries(RECENT_WINDOWS)
-    .map(([value, definition]) => {
-      const selected = value === selectedWindow ? " selected" : "";
-
-      return `<option value="${escapeAttribute(value)}"${selected}>Last ${escapeHtml(definition.label)}</option>`;
-    })
-    .join("");
-}
-
 function renderEmptyState(windowLabel: string, isLegacy: boolean): string {
   return `
     <div class="empty-state" data-testid="empty-state">
@@ -275,6 +250,14 @@ function renderEmptyState(windowLabel: string, isLegacy: boolean): string {
           ? "This Langfuse project has no trace records in the selected window."
           : "This Langfuse project has no logical root observations in the selected window."
       }</p>
+    </div>`;
+}
+
+function renderFilteredEmptyState(window: RecentWindow): string {
+  return `
+    <div class="empty-state filter-empty-state" data-testid="filter-empty-state">
+      <h3>No traces match these filters</h3>
+      <p>Change a filter or <a href="/?window=${escapeAttribute(window)}">clear all filters</a>.</p>
     </div>`;
 }
 
@@ -368,7 +351,7 @@ function renderTraceCard(
   trace: CurrentRecentTrace | LegacyRecentTrace,
   window: RecentWindow,
 ): string {
-  const levelClass = trace.highestLevel.toLowerCase();
+  const levelClass = trace.highestLevel?.toLowerCase() ?? "unknown";
 
   const tags = trace.tags
     .slice(0, 3)
@@ -403,8 +386,4 @@ function renderTraceCard(
 
 function formatCount(value: number | null): string {
   return value === null ? "Available per trace" : NUMBER_FORMATTER.format(value);
-}
-
-function apiLabel(version: ApiVersion): string {
-  return version === "v3" ? "Self-hosted v3 API" : "v4 Observations API";
 }

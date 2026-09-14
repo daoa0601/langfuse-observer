@@ -35,18 +35,21 @@ Open [http://127.0.0.1:3000](http://127.0.0.1:3000).
 ## What it shows
 
 - Recent traces and sessions from the last 1 hour, 6 hours, 24 hours, 7 days, 30 days, or 90 days
+- Trace filters for name or ID, environment, tags, highest level, and running state
 - Direct lookup for a known trace ID. V4 searches the last 90 days, while v3 retrieves the trace by ID.
 - Direct lookup for a known session ID. V4 searches the last 90 days, while v3 returns the complete legacy session record.
 - Physical parent-child order using `parentObservationId`
 - A per-turn agent sidebar that extracts system and developer prompts, declared tools, input context, replies, tool calls, and tool results from recognized payloads
 - Turn badges and links that highlight the matching `GENERATION` observation
-- Input, output, metadata, model, token usage, cost, and timing for each observation
+- Input, output, model parameters, model, token usage, cost, and timing for each observation
 - Clear empty, authentication, rate-limit, timeout, and malformed-response pages
-- Trace-level input, output, and metadata returned by the v3 trace API
+- Trace-level input and output returned by the v3 trace API
 
 On v4, the recent trace list asks Langfuse for logical root observations. A distributed trace with no logical root in this project may not appear there, but direct lookup still works when you know its ID. The session list follows every cursor in the selected window before it groups rows by `sessionId` and `traceId`. Detail pages show the exact 90-day query bounds because totals and parent relationships can be partial at that boundary.
 
 On v3, the viewer follows the page-number pagination returned by the legacy trace and session endpoints. The v3 session list does not include trace or observation counts. Open a session to list its traces, then open a trace to load every observation and payload.
+
+Trace filters run after the viewer reads every result page in the selected window. Search, environment, and tag filters work with both APIs. Highest-level and running-state filters require v4 because the v3 trace list does not provide those facts.
 
 Each viewer request has a 30-second deadline. Closing the browser request cancels active Langfuse reads. Row and page budgets stop oversized or non-terminating pagination with an explicit error instead of returning a partial page. Rate-limit pages use Langfuse's `Retry-After` header when it is present.
 

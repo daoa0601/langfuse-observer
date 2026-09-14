@@ -87,6 +87,179 @@ test("the recent page groups roots and escapes Langfuse text", async (t) => {
   assert.equal((body.match(/class="trace-card"/g) ?? []).length, 1);
 });
 
+test("recent trace filters apply after pagination and combine selected fields", async (t) => {
+  const requests: RequestSnapshot[] = [];
+
+  const app = await startTestApp(t, (request, response) => {
+    const snapshot = requestSnapshot(request);
+    requests.push(snapshot);
+
+    if (snapshot.url.searchParams.get("cursor") === "next-page") {
+      sendJson(response, 200, {
+        data: [
+          lightObservation({
+            id: "running-checkout",
+            traceId: "trace-running",
+            traceName: "Checkout worker",
+            environment: "production",
+            tags: ["agent"],
+            level: "ERROR",
+            endTime: null,
+          }),
+        ],
+        meta: {},
+      });
+
+      return;
+    }
+
+    sendJson(response, 200, {
+      data: [
+        lightObservation({
+          id: "ended-checkout",
+          traceId: "checkout-by-id",
+          traceName: "Fulfilment worker",
+          environment: "staging",
+          tags: ["agent"],
+          level: "WARNING",
+        }),
+        lightObservation({
+          id: "running-batch",
+          traceId: "trace-batch",
+          traceName: "Batch worker",
+          environment: "production",
+          tags: ["batch"],
+          level: "ERROR",
+          endTime: null,
+        }),
+      ],
+      meta: { cursor: "next-page" },
+    });
+  });
+
+  const query = new URLSearchParams([
+    ["window", "24h"],
+    ["q", "checkout"],
+    ["environment", "production"],
+    ["environment", "staging"],
+    ["tag", "agent"],
+    ["level", "ERROR"],
+    ["level", "WARNING"],
+  ]);
+
+  const response = await fetch(`${app.origin}/?${query.toString()}`);
+  const body = await response.text();
+
+  assert.equal(response.status, 200);
+  assert.match(body, /Checkout worker/);
+  assert.match(body, /Fulfilment worker/);
+  assert.doesNotMatch(body, /Batch worker/);
+  assert.match(body, /2 of 3 shown/);
+  assert.match(body, /<form class="trace-filter-sidebar" method="get" action="\/">/);
+
+  const runningResponse = await fetch(`${app.origin}/?window=24h&status=running`);
+  const runningBody = await runningResponse.text();
+
+  assert.equal(runningResponse.status, 200);
+  assert.match(runningBody, /Checkout worker/);
+  assert.match(runningBody, /Batch worker/);
+  assert.doesNotMatch(runningBody, /Fulfilment worker/);
+  assert.match(runningBody, /2 of 3 shown/);
+  assert.equal(requests.length, 4);
+
+  for (const request of requests) {
+    assert.equal(request.url.searchParams.get("q"), null);
+    assert.equal(request.url.searchParams.get("environment"), null);
+    assert.equal(request.url.searchParams.get("tag"), null);
+    assert.equal(request.url.searchParams.get("level"), null);
+  }
+});
+
+test("invalid recent trace filters fail before Langfuse is called", async (t) => {
+  let requests = 0;
+
+  const app = await startTestApp(t, (_request, response) => {
+    requests += 1;
+    sendJson(response, 200, { data: [], meta: {} });
+  });
+
+  const response = await fetch(`${app.origin}/?status=stuck`);
+  const body = await response.text();
+
+  assert.equal(response.status, 400);
+  assert.match(body, /Invalid trace filter/);
+  assert.match(body, /running or ended/);
+  assert.equal(requests, 0);
+});
+
+test("v3 filters only facts supplied by the legacy trace list", async (t) => {
+  let requests = 0;
+
+  const app = await startTestApp(
+    t,
+    (_request, response) => {
+      requests += 1;
+      sendJson(
+        response,
+        200,
+        legacyPage([
+          legacyTrace({
+            id: "legacy-checkout",
+            name: "Checkout worker",
+            environment: "production",
+            tags: ["agent"],
+          }),
+          legacyTrace({ id: "legacy-batch", name: "Batch worker", tags: ["batch"] }),
+        ]),
+      );
+    },
+    { apiVersion: "v3" },
+  );
+
+  const response = await fetch(
+    `${app.origin}/?window=24h&q=checkout&environment=production&tag=agent`,
+  );
+
+  const body = await response.text();
+
+  assert.equal(response.status, 200);
+  assert.match(body, /Checkout worker/);
+  assert.doesNotMatch(body, /Batch worker/);
+  assert.match(body, /Highest level is unavailable from the v3 trace list/);
+  assert.match(body, /Run state is unavailable from the v3 trace list/);
+  assert.match(body, /class="level-rail unknown"/);
+
+  const unsupported = await fetch(`${app.origin}/?window=24h&level=ERROR`);
+  const unsupportedBody = await unsupported.text();
+
+  assert.equal(unsupported.status, 400);
+  assert.match(unsupportedBody, /Highest level filtering requires the v4 observations API/);
+  assert.equal(requests, 2);
+});
+
+test("recent trace filters keep selected zero-count values escaped", async (t) => {
+  const app = await startTestApp(t, (_request, response) => {
+    sendJson(response, 200, {
+      data: [lightObservation({ traceName: "Safe trace", environment: "default" })],
+      meta: {},
+    });
+  });
+
+  const environment = '"><script>bad()</script>';
+
+  const response = await fetch(
+    `${app.origin}/?window=24h&environment=${encodeURIComponent(environment)}`,
+  );
+
+  const body = await response.text();
+
+  assert.equal(response.status, 200);
+  assert.match(body, /No traces match these filters/);
+  assert.match(body, /0 of 1 shown/);
+  assert.match(body, /value="&quot;&gt;&lt;script&gt;bad\(\)&lt;\/script&gt;"/);
+  assert.doesNotMatch(body, /<script>bad\(\)<\/script>/);
+});
+
 test("trace detail follows cursors and renders physical parent order", async (t) => {
   const requests: RequestSnapshot[] = [];
 

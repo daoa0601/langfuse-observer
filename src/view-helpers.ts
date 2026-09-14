@@ -1,4 +1,5 @@
-import type { QueryScope, RecentWindow } from "./observer-types.ts";
+import type { ApiVersion, QueryScope, RecentWindow } from "./observer-types.ts";
+import { RECENT_WINDOWS } from "./trace-model.ts";
 
 const DATE_FORMATTER = new Intl.DateTimeFormat("en", {
   dateStyle: "medium",
@@ -47,6 +48,20 @@ export function renderQueryScope(scope: QueryScope): string {
 
 export function renderStat(label: string, value: string): string {
   return `<div><dt>${escapeHtml(label)}</dt><dd>${escapeHtml(value)}</dd></div>`;
+}
+
+export function renderWindowOptions(selectedWindow: RecentWindow): string {
+  return Object.entries(RECENT_WINDOWS)
+    .map(([value, definition]) => {
+      const selected = value === selectedWindow ? " selected" : "";
+
+      return `<option value="${escapeAttribute(value)}"${selected}>Last ${escapeHtml(definition.label)}</option>`;
+    })
+    .join("");
+}
+
+export function apiLabel(version: ApiVersion): string {
+  return version === "v3" ? "Self-hosted v3 API" : "v4 Observations API";
 }
 
 export function renderLayout({ title, body }: Readonly<{ title: string; body: string }>): string {
