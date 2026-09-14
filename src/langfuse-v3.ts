@@ -395,8 +395,8 @@ function summarizeLegacyTrace(trace: LegacyTrace) {
     startedAt: trace.timestamp,
     latestRootAt: trace.timestamp,
     rootCount: null,
-    hasOpenRoot: false,
-    highestLevel: "DEFAULT",
+    hasOpenRoot: null,
+    highestLevel: null,
     environment: trace.environment,
     tags: trace.tags,
   });

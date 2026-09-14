@@ -98,18 +98,22 @@ interface RecentTraceBase {
   readonly name: string;
   readonly startedAt: string;
   readonly latestRootAt: string;
-  readonly hasOpenRoot: boolean;
-  readonly highestLevel: string;
+  readonly hasOpenRoot: boolean | null;
+  readonly highestLevel: string | null;
   readonly environment: string | null;
   readonly tags: readonly string[];
 }
 
 export interface CurrentRecentTrace extends RecentTraceBase {
   readonly rootCount: number;
+  readonly hasOpenRoot: boolean;
+  readonly highestLevel: string;
 }
 
 export interface LegacyRecentTrace extends RecentTraceBase {
   readonly rootCount: null;
+  readonly hasOpenRoot: null;
+  readonly highestLevel: null;
 }
 
 interface SessionSummaryBase {
