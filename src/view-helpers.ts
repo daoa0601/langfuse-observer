@@ -70,7 +70,7 @@ export function renderLayout({ title, body }: Readonly<{ title: string; body: st
   <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <meta name="color-scheme" content="light">
+    <meta name="color-scheme" content="dark">
     <title>${escapeHtml(title)} · Langfuse Observer</title>
     <link rel="stylesheet" href="/styles.css">
   </head>
