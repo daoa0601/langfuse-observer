@@ -5,7 +5,13 @@ import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { AddressInfo } from "node:net";
-import { parseJson, isJsonObject, type JsonObject, type JsonValue } from "../../src/json.ts";
+import {
+  parseJson,
+  isJsonObject,
+  isJsonString,
+  type JsonObject,
+  type JsonValue,
+} from "../../src/json.ts";
 import { registerTracing } from "./index.ts";
 import { readTracingEnabled } from "./config.ts";
 import { assistantOutput, capture, toolOutput } from "./privacy.ts";
@@ -422,6 +428,32 @@ describe("Prime lifecycle export", () => {
 
     try {
       expect(Object.keys(f.host.handlers)).not.toContain("before_provider_request");
+    } finally {
+      f.close();
+    }
+  });
+  test("generation timing includes the wait before the provider starts streaming", async () => {
+    const f = await fixture(false);
+
+    try {
+      await startRequest(f.host);
+      await f.host.emit("context", { messages: [{ role: "user", content: "prompt" }] });
+      // Prime emits message_start only once response headers arrive.
+      await Bun.sleep(50);
+      await f.host.emit("message_start", { message: { role: "assistant", content: [] } });
+      await f.host.emit("message_end", { message: assistant });
+      await f.host.emit("agent_end", { messages: [assistant] });
+      await f.host.command?.("flush", f.host.ctx);
+
+      const generation = exportedSpans(f.requests).find(
+        (span) => spanAttribute(span, "langfuse.observation.type") === "generation",
+      );
+
+      const start = generation?.["startTimeUnixNano"];
+      const end = generation?.["endTimeUnixNano"];
+
+      if (!isJsonString(start) || !isJsonString(end)) throw new Error("Missing span times");
+      expect(BigInt(end) - BigInt(start)).toBeGreaterThanOrEqual(40_000_000n);
     } finally {
       f.close();
     }

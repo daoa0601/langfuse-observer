@@ -24,6 +24,8 @@ interface Run {
   generation: Observation | null;
   latestGenerationId: string | null;
   generationInput: string | null;
+  /** When Prime assembled the next provider request; message_start waits for response headers. */
+  generationStart: number | null;
   tools: Map<string, Observation>;
   captureBodies: boolean;
   failed: boolean;
@@ -122,6 +124,7 @@ export function registerTracing(pi: PrimeExtensionAPI, settings: Settings): void
       generation: null,
       latestGenerationId: null,
       generationInput: null,
+      generationStart: null,
       tools: new Map(),
       captureBodies,
       failed: false,
@@ -141,9 +144,11 @@ export function registerTracing(pi: PrimeExtensionAPI, settings: Settings): void
       traceName: run.root.traceName,
       name: "Model call",
       type: "GENERATION",
-      startTime: Date.now(),
+      startTime: run.generationStart ?? Date.now(),
       endTime: Date.now(),
     };
+
+    run.generationStart = null;
 
     if (ctx.model) generation.model = ctx.model.id;
 
@@ -210,6 +215,7 @@ export function registerTracing(pi: PrimeExtensionAPI, settings: Settings): void
 
     if (!tracingEnabled() || !run) return;
     run.generationInput = body(conversationInput(event.messages), run) ?? null;
+    run.generationStart = Date.now();
   });
 
   // No before_provider_request hook: registering one makes Prime drop idempotency-key reuse on retries.
