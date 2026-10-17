@@ -45,7 +45,6 @@ export function createCurrentObserver({
       const observations = await readObservationPages(
         {
           fields: "core,basic,trace_context",
-          isRootObservation: "true",
           fromStartTime: from.toISOString(),
           toStartTime: to.toISOString(),
           limit: String(PAGE_SIZE),

@@ -31,6 +31,7 @@ export type Recognizer =
   | "anthropic-response"
   | "pydantic-ai-messages"
   | "assistant-output"
+  | "tool-output"
   | "plain-text";
 
 export interface Evidence {

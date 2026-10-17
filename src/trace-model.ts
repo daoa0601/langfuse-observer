@@ -111,11 +111,15 @@ export function startOfWindow(window: RecentWindow, now: Date): Date {
 }
 
 export function summarizeRecentTraces(
-  rootObservations: readonly LightObservation[],
+  observations: readonly LightObservation[],
 ): readonly Readonly<CurrentRecentTrace>[] {
   const grouped = new Map<string, MutableRecentTrace>();
 
-  for (const observation of rootObservations) {
+  for (const observation of observations) {
+    if (!observation.isLogicalRoot) {
+      continue;
+    }
+
     const existing = grouped.get(observation.traceId);
 
     if (!existing) {
@@ -127,11 +131,18 @@ export function summarizeRecentTraces(
     existing.latestRootAt = later(existing.latestRootAt, observation.startTime);
     existing.rootCount += 1;
     existing.hasOpenRoot ||= observation.endTime === null;
-    existing.highestLevel = worseLevel(existing.highestLevel, observation.level);
     existing.tags = [...new Set([...existing.tags, ...observation.tags])];
 
     if (observation.traceName) {
       existing.name = observation.traceName;
+    }
+  }
+
+  for (const observation of observations) {
+    const trace = grouped.get(observation.traceId);
+
+    if (trace) {
+      trace.highestLevel = worseLevel(trace.highestLevel, observation.level);
     }
   }
 

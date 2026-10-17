@@ -47,7 +47,6 @@ test("the recent page calls Langfuse and renders a healthy empty state", async (
   assert.equal(request.authorization, AUTHORIZATION);
   assert.equal(request.url.pathname, "/api/public/v2/observations");
   assert.equal(request.url.searchParams.get("fields"), "core,basic,trace_context");
-  assert.equal(request.url.searchParams.get("isRootObservation"), "true");
   assert.equal(request.url.searchParams.get("fromStartTime"), "2026-09-10T06:00:00.000Z");
   assert.equal(request.url.searchParams.get("toStartTime"), NOW.toISOString());
 });
@@ -190,6 +189,57 @@ test("invalid recent trace filters fail before Langfuse is called", async (t) =>
   assert.match(body, /Invalid trace filter/);
   assert.match(body, /running or ended/);
   assert.equal(requests, 0);
+});
+
+test("highest level includes child failures across result pages", async (t) => {
+  const app = await startTestApp(t, (request, response) => {
+    const url = requestSnapshot(request).url;
+
+    if (url.searchParams.get("cursor") === "roots") {
+      sendJson(response, 200, {
+        data: [
+          lightObservation({ id: "failed-root", traceId: "failed", traceName: "Failed run" }),
+          lightObservation({ id: "healthy-root", traceId: "healthy", traceName: "Healthy run" }),
+        ],
+        meta: {},
+      });
+
+      return;
+    }
+
+    const children = [
+      lightObservation({
+        id: "failed-tool",
+        traceId: "failed",
+        parentObservationId: "failed-root",
+        isRootObservation: false,
+        level: "ERROR",
+        endTime: null,
+      }),
+      lightObservation({
+        id: "orphan-tool",
+        traceId: "root-outside-window",
+        parentObservationId: "older-root",
+        isRootObservation: false,
+        level: "ERROR",
+      }),
+    ];
+
+    sendJson(response, 200, {
+      data: url.searchParams.get("isRootObservation") === "true" ? [] : children,
+      meta: { cursor: "roots" },
+    });
+  });
+
+  const response = await fetch(`${app.origin}/?level=ERROR&status=ended`);
+  const body = await response.text();
+
+  assert.equal(response.status, 200);
+  assert.match(body, /Failed run/);
+  assert.doesNotMatch(body, /Healthy run/);
+  assert.doesNotMatch(body, /root-outside-window/);
+  assert.match(body, /1 of 2 shown/);
+  assert.match(body, /1 logical root/);
 });
 
 test("v3 filters only facts supplied by the legacy trace list", async (t) => {
@@ -415,6 +465,36 @@ test("trace detail lists agent prompts and tools and marks each model turn", asy
   assert.match(body, /I will search &lt;script&gt;alert\(1\)&lt;\/script&gt;/);
   assert.doesNotMatch(body, /<script>alert\(1\)<\/script>/);
   assert.match(response.headers.get("content-security-policy") ?? "", /script-src 'none'/);
+});
+
+test("trace detail includes standalone tool results in the agent sidebar", async (t) => {
+  const app = await startTestApp(t, (_request, response) => {
+    sendJson(response, 200, {
+      data: [
+        fullObservation({
+          type: "TOOL",
+          name: "Catalog lookup",
+          output: JSON.stringify({
+            role: "tool",
+            tool_call_id: "call-catalog",
+            content: "Milk costs <3> euros.",
+          }),
+        }),
+      ],
+      meta: {},
+    });
+  });
+
+  const response = await fetch(`${app.origin}/traces/trace-1`);
+  const body = await response.text();
+
+  assert.equal(response.status, 200);
+  assert.match(body, /<aside class="agent-sidebar"/);
+  const sidebar = body.slice(body.indexOf('<aside class="agent-sidebar"'));
+  assert.match(sidebar, /Tool result/);
+  assert.match(sidebar, /call-catalog/);
+  assert.match(sidebar, /Milk costs &lt;3&gt; euros/);
+  assert.doesNotMatch(sidebar, /JSON shape was not recognized/);
 });
 
 test("trace detail renders Pydantic AI system prompts", async (t) => {

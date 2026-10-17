@@ -45,7 +45,7 @@ Open [http://127.0.0.1:3000](http://127.0.0.1:3000).
 - Clear empty, authentication, rate-limit, timeout, and malformed-response pages
 - Trace-level input and output returned by the v3 trace API
 
-On v4, the recent trace list asks Langfuse for logical root observations. A distributed trace with no logical root in this project may not appear there, but direct lookup still works when you know its ID. The session list follows every cursor in the selected window before it groups rows by `sessionId` and `traceId`. Detail pages show the exact 90-day query bounds because totals and parent relationships can be partial at that boundary.
+On v4, the recent trace list reads all observations in the selected window. It lists traces with a logical root in that window and uses their child observations when calculating the highest level. Running state and root counts come from the logical roots. A distributed trace with no logical root in this project may not appear there, but direct lookup still works when you know its ID. The session list follows every cursor in the selected window before it groups rows by `sessionId` and `traceId`. Detail pages show the exact 90-day query bounds because totals and parent relationships can be partial at that boundary.
 
 On v3, the viewer follows the page-number pagination returned by the legacy trace and session endpoints. The v3 session list does not include trace or observation counts. Open a session to list its traces, then open a trace to load every observation and payload.
 
@@ -54,6 +54,10 @@ Trace filters run after the viewer reads every result page in the selected windo
 Each viewer request has a 30-second deadline. Closing the browser request cancels active Langfuse reads. Row and page budgets stop oversized or non-terminating pagination with an explicit error instead of returning a partial page. Rate-limit pages use Langfuse's `Retry-After` header when it is present.
 
 The agent sidebar recognizes top-level OpenAI Chat, OpenAI Responses, Anthropic, and standard message-array payloads. Structured Langfuse input and output remain structured; JSON text is decoded only when the stored field is a string. The parser does not search arbitrary nested keys. Unknown or oversized payloads remain available in the raw observation, and the sidebar reports partial coverage.
+
+## Trace Prime Agent
+
+An optional [Prime Agent extension](integrations/prime-agent/README.md) exports model and tool activity to your Langfuse project. Install it with `bun integrations/prime-agent/install.ts`, then run `/reload` and `/langfuse status` in Prime Agent. Prompt and tool-body capture is off by default. The viewer itself stays read-only.
 
 ## Test it
 
