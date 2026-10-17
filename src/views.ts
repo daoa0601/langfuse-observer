@@ -69,6 +69,7 @@ export function renderRecentPage(page: RecentTracePage): string {
               </div>
               <span class="count-pill">${escapeHtml(countLabel)}</span>
             </div>
+            ${page.apiVersion === "v4" && !page.severityComplete ? '<p class="hero-copy">Highest levels may be partial because the child observation limit was reached. Level filters may miss traces.</p>' : ""}
             ${traces}
           </section>
         </section>

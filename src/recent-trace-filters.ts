@@ -43,6 +43,7 @@ interface RecentTracePageBase {
 
 export interface CurrentRecentTracePage extends RecentTracePageBase {
   readonly apiVersion: "v4";
+  readonly severityComplete: boolean;
   readonly traces: readonly CurrentRecentTrace[];
   readonly filterPanel: CurrentTraceFilterPanel;
 }
@@ -116,6 +117,7 @@ export function prepareRecentTracePage(
     kind: "ready",
     page: Object.freeze({
       apiVersion: "v4",
+      severityComplete: result.severityComplete,
       window: result.window,
       queriedAt: result.queriedAt,
       traces,

@@ -1,6 +1,7 @@
-import { readFileSync, writeFileSync } from "node:fs";
+import { randomUUID } from "node:crypto";
+import { closeSync, openSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
-import { join, isAbsolute } from "node:path";
+import { basename, dirname, join, isAbsolute } from "node:path";
 import { parseEnv } from "node:util";
 import { isJsonObject, isJsonString, parseJson, type JsonObject } from "../../src/json.ts";
 import type { TraceConfig } from "./transport.ts";
@@ -59,7 +60,20 @@ export function readTracingEnabled(path: string): boolean {
 
 export function setTracingEnabled(path: string, enabled: boolean): void {
   const config = readConfig(path);
-  writeFileSync(path, `${JSON.stringify({ ...config, enabled }, null, 2)}\n`, { mode: 0o600 });
+  const temporaryPath = join(dirname(path), `.${basename(path)}.${randomUUID()}.tmp`);
+  const file = openSync(temporaryPath, "wx", 0o600);
+
+  try {
+    try {
+      writeFileSync(file, `${JSON.stringify({ ...config, enabled }, null, 2)}\n`);
+    } finally {
+      closeSync(file);
+    }
+
+    renameSync(temporaryPath, path);
+  } finally {
+    rmSync(temporaryPath, { force: true });
+  }
 }
 
 function readConfig(path: string): JsonObject {

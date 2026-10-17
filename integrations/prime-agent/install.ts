@@ -1,4 +1,4 @@
-import { chmodSync, existsSync, mkdirSync, writeFileSync } from "node:fs";
+import { closeSync, existsSync, mkdirSync, openSync, rmSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -23,12 +23,29 @@ export function install(agentDirectory: string, envFile: string): void {
   };
 
   const source = fileURLToPath(new URL("./index.ts", import.meta.url));
-  writeFileSync(configPath, `${JSON.stringify(config, null, 2)}\n`, { flag: "wx", mode: 0o600 });
-  writeFileSync(extensionPath, `export { default } from ${JSON.stringify(source)};\n`, {
-    flag: "wx",
-    mode: 0o600,
-  });
-  chmodSync(configPath, 0o600);
+  writeNewFile(configPath, `${JSON.stringify(config, null, 2)}\n`);
+
+  try {
+    writeNewFile(extensionPath, `export { default } from ${JSON.stringify(source)};\n`);
+  } catch (cause) {
+    rmSync(configPath);
+    throw cause;
+  }
+}
+
+function writeNewFile(path: string, content: string): void {
+  const file = openSync(path, "wx", 0o600);
+
+  try {
+    try {
+      writeFileSync(file, content);
+    } finally {
+      closeSync(file);
+    }
+  } catch (cause) {
+    rmSync(path);
+    throw cause;
+  }
 }
 
 if (import.meta.main) {
@@ -39,7 +56,7 @@ if (import.meta.main) {
     );
   } catch {
     console.error(
-      "Install stopped. Check that .env exists and ~/.prime/agent/langfuse.json and extensions/langfuse.ts do not already exist. No files are overwritten.",
+      "Install failed. Check the observer .env, agent directory permissions, and existing Langfuse extension/config files.",
     );
     process.exitCode = 1;
   }

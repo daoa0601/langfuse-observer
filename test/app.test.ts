@@ -164,7 +164,6 @@ test("recent trace filters apply after pagination and combine selected fields", 
   assert.match(runningBody, /Batch worker/);
   assert.doesNotMatch(runningBody, /Fulfilment worker/);
   assert.match(runningBody, /2 of 3 shown/);
-  assert.equal(requests.length, 4);
 
   for (const request of requests) {
     assert.equal(request.url.searchParams.get("q"), null);
@@ -240,6 +239,51 @@ test("highest level includes child failures across result pages", async (t) => {
   assert.doesNotMatch(body, /root-outside-window/);
   assert.match(body, /1 of 2 shown/);
   assert.match(body, /1 logical root/);
+  assert.doesNotMatch(body, /Highest levels may be partial/);
+});
+
+test("recent traces keep their root capacity when child severity exceeds its budget", async (t) => {
+  const roots = [
+    lightObservation({ id: "failed-root", traceId: "failed", traceName: "Failed run" }),
+    lightObservation({ id: "other-root", traceId: "other", traceName: "Other run" }),
+  ];
+
+  const children = Array.from({ length: 20_001 }, (_, index) =>
+    lightObservation({
+      id: `child-${index}`,
+      traceId: "failed",
+      parentObservationId: "failed-root",
+      isRootObservation: false,
+      level: index === 0 ? "ERROR" : "DEFAULT",
+    }),
+  );
+
+  const app = await startTestApp(t, (request, response) => {
+    const parameters = requestSnapshot(request).url.searchParams;
+    const rootFilter = parameters.get("isRootObservation");
+
+    const observations =
+      rootFilter === "true" ? roots : rootFilter === "false" ? children : [...roots, ...children];
+
+    const offset = Number(parameters.get("cursor") ?? 0);
+    const nextOffset = offset + Number(parameters.get("limit"));
+
+    sendJson(response, 200, {
+      data: observations.slice(offset, nextOffset),
+      meta: nextOffset < observations.length ? { cursor: String(nextOffset) } : {},
+    });
+  });
+
+  const response = await fetch(`${app.origin}/`);
+  const body = await response.text();
+
+  assert.equal(response.status, 200);
+  assert.match(body, /Failed run/);
+  assert.match(body, /Other run/);
+  assert.match(body, /2 shown/);
+  assert.equal((body.match(/1 logical root/g) ?? []).length, 2);
+  assert.match(body, /class="level-rail error"/);
+  assert.match(body, /Highest levels may be partial/);
 });
 
 test("v3 filters only facts supplied by the legacy trace list", async (t) => {

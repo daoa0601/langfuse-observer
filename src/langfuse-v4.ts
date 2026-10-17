@@ -42,23 +42,37 @@ export function createCurrentObserver({
       const to = now();
       const from = startOfWindow(window, to);
 
-      const observations = await readObservationPages(
-        {
-          fields: "core,basic,trace_context",
-          fromStartTime: from.toISOString(),
-          toStartTime: to.toISOString(),
-          limit: String(PAGE_SIZE),
-        },
+      const query = {
+        fields: "core,basic,trace_context",
+        fromStartTime: from.toISOString(),
+        toStartTime: to.toISOString(),
+        limit: String(PAGE_SIZE),
+      };
+
+      const roots = await readObservationPages(
+        { ...query, isRootObservation: "true" },
         parseLightObservation,
         QUERY_LIMITS.recent,
         signal,
       );
 
+      const severity =
+        roots.rows.length === 0
+          ? { rows: [], complete: true }
+          : await readObservationPages(
+              { ...query, isRootObservation: "false" },
+              parseLightObservation,
+              QUERY_LIMITS.recentSeverity,
+              signal,
+              "truncate",
+            );
+
       return Object.freeze({
         apiVersion: "v4",
         window,
         queriedAt: to.toISOString(),
-        traces: summarizeRecentTraces(observations),
+        traces: summarizeRecentTraces(roots.rows, severity.rows),
+        severityComplete: severity.complete,
       });
     },
 
@@ -82,7 +96,7 @@ export function createCurrentObserver({
         apiVersion: "v4",
         window,
         queriedAt: to.toISOString(),
-        sessions: summarizeRecentSessions(observations),
+        sessions: summarizeRecentSessions(observations.rows),
       });
     },
 
@@ -107,7 +121,7 @@ export function createCurrentObserver({
         signal,
       );
 
-      const session = describeSession(sessionId, observations);
+      const session = describeSession(sessionId, observations.rows);
 
       return session
         ? Object.freeze({
@@ -135,7 +149,7 @@ export function createCurrentObserver({
         signal,
       );
 
-      const trace = describeTrace(traceId, observations);
+      const trace = describeTrace(traceId, observations.rows);
 
       return trace
         ? Object.freeze({
@@ -152,7 +166,8 @@ export function createCurrentObserver({
     parseObservation: (value: JsonValue) => Observation,
     rowLimit: number,
     signal: AbortSignal | undefined,
-  ): Promise<Observation[]> {
+    overflow: "reject" | "truncate" = "reject",
+  ): Promise<{ rows: Observation[]; complete: boolean }> {
     const rows: Observation[] = [];
     const seenCursors = new Set<string>();
     let cursor: string | null = null;
@@ -176,12 +191,16 @@ export function createCurrentObserver({
       });
 
       const page = parseCurrentPage(payload);
-      const parsedRows = page.data.map(parseObservation);
+
+      const pageRows =
+        overflow === "truncate" ? page.data.slice(0, rowLimit - rows.length) : page.data;
+
+      const parsedRows = pageRows.map(parseObservation);
       checkRowLimit(rows.length + parsedRows.length, rowLimit);
       rows.push(...parsedRows);
 
       if (!page.cursor) {
-        return rows;
+        return { rows, complete: pageRows.length === page.data.length };
       }
 
       if (seenCursors.has(page.cursor)) {
@@ -190,6 +209,13 @@ export function createCurrentObserver({
 
       seenCursors.add(page.cursor);
       cursor = page.cursor;
+
+      if (
+        overflow === "truncate" &&
+        (rows.length >= rowLimit || pageNumber >= Math.ceil(rowLimit / PAGE_SIZE))
+      ) {
+        return { rows, complete: false };
+      }
     }
   }
 }
