@@ -65,7 +65,7 @@ You can also edit `~/.prime/agent/langfuse.json`. Changes to `enabled` apply wit
 
 ## Observation layout
 
-- A trace per Prime `before_agent_start`/`agent_end` request, with an `AGENT` root carrying the prompt and final reply when body capture is enabled.
+- A trace per Prime `before_agent_start`/`agent_end` request, with an `AGENT` root carrying the prompt and final reply when body capture is enabled. An automatic retry, which Prime runs as a new agent loop without a prompt, is exported as a `Prime Agent continuation` child of that root.
 - Model calls are children of the agent root; tools are children of the model call that requested them, using their actual tool names.
 - A `GENERATION` observation per finalized model response.
 - A `TOOL` observation per host tool execution, parented to its generation.

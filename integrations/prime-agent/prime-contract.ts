@@ -17,7 +17,6 @@ export interface PrimeEvents {
   before_agent_start: { prompt: string };
   agent_end: { messages: readonly JsonObject[] };
   context: { messages: readonly JsonObject[] };
-  before_provider_request: { payload: JsonValue };
   message_start: { message: JsonObject };
   message_end: { message: JsonObject };
   tool_execution_start: { toolCallId: string; toolName: string; args: JsonValue };

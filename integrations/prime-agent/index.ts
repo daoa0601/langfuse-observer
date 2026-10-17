@@ -11,6 +11,14 @@ import { assistantOutput, capture, conversationInput, finalReply, toolOutput } f
 import type { PrimeContext, PrimeExtensionAPI } from "./prime-contract.ts";
 import { LangfuseExporter, type Observation } from "./transport.ts";
 
+/** Where a request's later agent loops attach when Prime continues it without a new prompt. */
+interface Continuation {
+  traceId: string;
+  rootId: string;
+  traceName: string;
+  captureBodies: boolean;
+}
+
 interface Run {
   root: Observation;
   generation: Observation | null;
@@ -61,6 +69,7 @@ export function registerTracing(pi: PrimeExtensionAPI, settings: Settings): void
   const exporter = new LangfuseExporter(settings.transport);
   const secrets = [settings.transport.publicKey, settings.transport.secretKey];
   const runs = new Map<string, Run>();
+  const continuations = new Map<string, Continuation>();
   let enabled = settings.enabled;
   let bodies = settings.captureBodies;
   let timerStarted = false;
@@ -70,6 +79,7 @@ export function registerTracing(pi: PrimeExtensionAPI, settings: Settings): void
 
     if (!savedEnabled && enabled) {
       runs.clear();
+      continuations.clear();
       exporter.clear();
     }
 
@@ -106,6 +116,22 @@ export function registerTracing(pi: PrimeExtensionAPI, settings: Settings): void
     runs.delete(sessionId);
   }
 
+  function startRun(root: Observation, captureBodies: boolean): Run {
+    const run: Run = {
+      root,
+      generation: null,
+      latestGenerationId: null,
+      generationInput: null,
+      tools: new Map(),
+      captureBodies,
+      failed: false,
+    };
+
+    runs.set(root.sessionId, run);
+
+    return run;
+  }
+
   function newGeneration(run: Run, ctx: PrimeContext): Observation {
     const generation: Observation = {
       traceId: run.root.traceId,
@@ -138,6 +164,7 @@ export function registerTracing(pi: PrimeExtensionAPI, settings: Settings): void
     if (!tracingEnabled()) return;
     const sessionId = ctx.sessionManager.getSessionId();
     finishRun(sessionId, true);
+    continuations.delete(sessionId);
 
     const root: Observation = {
       traceId: id(16),
@@ -150,20 +177,32 @@ export function registerTracing(pi: PrimeExtensionAPI, settings: Settings): void
       endTime: Date.now(),
     };
 
-    const run: Run = {
-      root,
-      generation: null,
-      latestGenerationId: null,
-      generationInput: null,
-      tools: new Map(),
-      captureBodies: bodies,
-      failed: false,
-    };
-
+    const run = startRun(root, bodies);
     const input = body({ role: "user", content: event.prompt }, run);
 
     if (input !== undefined) root.input = input;
-    runs.set(sessionId, run);
+  });
+
+  // An automatic retry runs a new agent loop with no before_agent_start; trace it under its request.
+  pi.on("agent_start", (_event, ctx) => {
+    const sessionId = ctx.sessionManager.getSessionId();
+    const continuation = continuations.get(sessionId);
+
+    if (!tracingEnabled() || runs.has(sessionId) || !continuation) return;
+    startRun(
+      {
+        traceId: continuation.traceId,
+        id: id(8),
+        parentId: continuation.rootId,
+        sessionId,
+        traceName: continuation.traceName,
+        name: "Prime Agent continuation",
+        type: "AGENT",
+        startTime: Date.now(),
+        endTime: Date.now(),
+      },
+      continuation.captureBodies,
+    );
   });
 
   pi.on("context", (event, ctx) => {
@@ -173,15 +212,7 @@ export function registerTracing(pi: PrimeExtensionAPI, settings: Settings): void
     run.generationInput = body(conversationInput(event.messages), run) ?? null;
   });
 
-  pi.on("before_provider_request", (_event, ctx) => {
-    const run = runs.get(ctx.sessionManager.getSessionId());
-
-    if (!tracingEnabled() || !run) return;
-
-    // Provider retries reuse the active generation: do not fabricate extra turns.
-    if (!run.generation) newGeneration(run, ctx);
-  });
-
+  // No before_provider_request hook: registering one makes Prime drop idempotency-key reuse on retries.
   pi.on("message_start", (event, ctx) => {
     if (event.message["role"] !== "assistant") return;
     const run = runs.get(ctx.sessionManager.getSessionId());
@@ -258,11 +289,21 @@ export function registerTracing(pi: PrimeExtensionAPI, settings: Settings): void
       if (output !== undefined) run.root.output = output;
     }
 
+    if (run) {
+      continuations.set(sessionId, {
+        traceId: run.root.traceId,
+        rootId: run.root.parentId ?? run.root.id,
+        traceName: run.root.traceName,
+        captureBodies: run.captureBodies,
+      });
+    }
+
     finishRun(sessionId);
   });
   pi.on("session_shutdown", async (_event, ctx) => {
     if (!tracingEnabled()) return;
     finishRun(ctx.sessionManager.getSessionId(), true);
+    continuations.delete(ctx.sessionManager.getSessionId());
     await exporter.close();
   });
 
@@ -292,6 +333,8 @@ export function registerTracing(pi: PrimeExtensionAPI, settings: Settings): void
         case "capture-off":
           bodies = false;
           exporter.clear();
+
+          for (const continuation of continuations.values()) continuation.captureBodies = false;
 
           for (const run of runs.values()) {
             run.captureBodies = false;

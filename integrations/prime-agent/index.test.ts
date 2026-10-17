@@ -129,11 +129,6 @@ async function modelCall(host: Host): Promise<void> {
   await host.emit("context", {
     messages: [{ role: "user", content: "private synthetic prompt sk-test-known-secret" }],
   });
-  await host.emit("before_provider_request", {
-    payload: {
-      messages: [{ role: "user", content: "private synthetic prompt sk-test-known-secret" }],
-    },
-  });
   await host.emit("message_start", { message: { role: "assistant", content: [] } });
   await host.emit("message_end", { message: assistant });
 }
@@ -194,9 +189,7 @@ describe("Prime lifecycle export", () => {
           },
         ],
       });
-      await f.host.emit("before_provider_request", {
-        payload: { instructions: "raw system instructions", store: false, stream: true },
-      });
+      await f.host.emit("message_start", { message: { role: "assistant", content: [] } });
 
       const toolRequest: JsonObject = {
         ...assistant,
@@ -232,7 +225,7 @@ describe("Prime lifecycle export", () => {
       await f.host.emit("context", {
         messages: [{ role: "user", content: "Find the configuration" }],
       });
-      await f.host.emit("before_provider_request", { payload: {} });
+      await f.host.emit("message_start", { message: { role: "assistant", content: [] } });
       await f.host.emit("message_end", { message: reply });
       await f.host.emit("agent_end", { messages: [toolRequest, reply] });
       await f.host.command?.("flush", f.host.ctx);
@@ -415,11 +408,75 @@ describe("Prime lifecycle export", () => {
 
     try {
       await startRequest(f.host);
-      await f.host.emit("before_provider_request", { payload: {} });
+      await f.host.emit("message_start", { message: { role: "assistant", content: [] } });
       await f.host.emit("session_shutdown", { reason: "reload" });
       expect(JSON.stringify(f.requests)).toContain("ERROR");
       await f.host.command?.("flush", f.host.ctx);
       expect(f.requests).toHaveLength(1);
+    } finally {
+      f.close();
+    }
+  });
+  test("leaves Prime's provider payload hook unregistered so retries keep idempotency keys", async () => {
+    const f = await fixture(true);
+
+    try {
+      expect(Object.keys(f.host.handlers)).not.toContain("before_provider_request");
+    } finally {
+      f.close();
+    }
+  });
+  test("an automatic retry loop is traced under its request instead of being dropped", async () => {
+    const f = await fixture(true);
+
+    try {
+      const failure: JsonObject = { role: "assistant", stopReason: "error", content: [] };
+
+      const reply: JsonObject = {
+        role: "assistant",
+        model: "synthetic-model",
+        stopReason: "stop",
+        content: [{ type: "text", text: "retried answer" }],
+        usage: { input: 4, output: 1 },
+      };
+
+      await startRequest(f.host);
+      await f.host.emit("message_end", { message: failure });
+      await f.host.emit("agent_end", { messages: [failure] });
+      // Prime's retry calls agent.continue(): agent_start without before_agent_start.
+      await f.host.emit("agent_start", { type: "agent_start" });
+      await f.host.emit("message_start", { message: { role: "assistant", content: [] } });
+      await f.host.emit("message_end", { message: reply });
+      await f.host.emit("agent_end", { messages: [reply] });
+      await f.host.command?.("flush", f.host.ctx);
+
+      const spans = exportedSpans(f.requests);
+      const roots = spans.filter((span) => span["parentSpanId"] === undefined);
+      const continuation = spans.find((span) => span["name"] === "Prime Agent continuation");
+
+      const retried = spans.find(
+        (span) =>
+          spanAttribute(span, "langfuse.observation.type") === "generation" &&
+          JSON.stringify(spanAttribute(span, "langfuse.observation.output")).includes(
+            "retried answer",
+          ),
+      );
+
+      expect(roots).toHaveLength(1);
+      expect(continuation?.["traceId"]).toBe(roots[0]?.["traceId"]);
+      expect(continuation?.["parentSpanId"]).toBe(roots[0]?.["spanId"]);
+      expect(spanAttribute(continuation, "langfuse.observation.output")).toContain(
+        "retried answer",
+      );
+      expect(retried?.["parentSpanId"]).toBe(continuation?.["spanId"]);
+
+      // A new prompt starts its own trace rather than continuing the retried one.
+      await startRequest(f.host, "next prompt");
+      await f.host.emit("agent_end", { messages: [] });
+      await f.host.command?.("flush", f.host.ctx);
+      expect(
+        exportedSpans(f.requests).filter((span) => span["parentSpanId"] === undefined),
+      ).toHaveLength(2);
     } finally {
       f.close();
     }
