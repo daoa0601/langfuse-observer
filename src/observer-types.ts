@@ -162,6 +162,7 @@ export type RecentTracesResult =
       window: RecentWindow;
       queriedAt: string;
       traces: readonly CurrentRecentTrace[];
+      severityComplete: boolean;
     }>;
 
 export type RecentSessionsResult =

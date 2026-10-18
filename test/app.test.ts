@@ -47,7 +47,6 @@ test("the recent page calls Langfuse and renders a healthy empty state", async (
   assert.equal(request.authorization, AUTHORIZATION);
   assert.equal(request.url.pathname, "/api/public/v2/observations");
   assert.equal(request.url.searchParams.get("fields"), "core,basic,trace_context");
-  assert.equal(request.url.searchParams.get("isRootObservation"), "true");
   assert.equal(request.url.searchParams.get("fromStartTime"), "2026-09-10T06:00:00.000Z");
   assert.equal(request.url.searchParams.get("toStartTime"), NOW.toISOString());
 });
@@ -165,7 +164,6 @@ test("recent trace filters apply after pagination and combine selected fields", 
   assert.match(runningBody, /Batch worker/);
   assert.doesNotMatch(runningBody, /Fulfilment worker/);
   assert.match(runningBody, /2 of 3 shown/);
-  assert.equal(requests.length, 4);
 
   for (const request of requests) {
     assert.equal(request.url.searchParams.get("q"), null);
@@ -190,6 +188,102 @@ test("invalid recent trace filters fail before Langfuse is called", async (t) =>
   assert.match(body, /Invalid trace filter/);
   assert.match(body, /running or ended/);
   assert.equal(requests, 0);
+});
+
+test("highest level includes child failures across result pages", async (t) => {
+  const app = await startTestApp(t, (request, response) => {
+    const url = requestSnapshot(request).url;
+
+    if (url.searchParams.get("cursor") === "roots") {
+      sendJson(response, 200, {
+        data: [
+          lightObservation({ id: "failed-root", traceId: "failed", traceName: "Failed run" }),
+          lightObservation({ id: "healthy-root", traceId: "healthy", traceName: "Healthy run" }),
+        ],
+        meta: {},
+      });
+
+      return;
+    }
+
+    const children = [
+      lightObservation({
+        id: "failed-tool",
+        traceId: "failed",
+        parentObservationId: "failed-root",
+        isRootObservation: false,
+        level: "ERROR",
+        endTime: null,
+      }),
+      lightObservation({
+        id: "orphan-tool",
+        traceId: "root-outside-window",
+        parentObservationId: "older-root",
+        isRootObservation: false,
+        level: "ERROR",
+      }),
+    ];
+
+    sendJson(response, 200, {
+      data: url.searchParams.get("isRootObservation") === "true" ? [] : children,
+      meta: { cursor: "roots" },
+    });
+  });
+
+  const response = await fetch(`${app.origin}/?level=ERROR&status=ended`);
+  const body = await response.text();
+
+  assert.equal(response.status, 200);
+  assert.match(body, /Failed run/);
+  assert.doesNotMatch(body, /Healthy run/);
+  assert.doesNotMatch(body, /root-outside-window/);
+  assert.match(body, /1 of 2 shown/);
+  assert.match(body, /1 logical root/);
+  assert.doesNotMatch(body, /Highest levels may be partial/);
+});
+
+test("recent traces keep their root capacity when child severity exceeds its budget", async (t) => {
+  const roots = [
+    lightObservation({ id: "failed-root", traceId: "failed", traceName: "Failed run" }),
+    lightObservation({ id: "other-root", traceId: "other", traceName: "Other run" }),
+  ];
+
+  const children = Array.from({ length: 20_001 }, (_, index) =>
+    lightObservation({
+      id: `child-${index}`,
+      traceId: "failed",
+      parentObservationId: "failed-root",
+      isRootObservation: false,
+      level: index === 0 ? "ERROR" : "DEFAULT",
+    }),
+  );
+
+  const app = await startTestApp(t, (request, response) => {
+    const parameters = requestSnapshot(request).url.searchParams;
+    const rootFilter = parameters.get("isRootObservation");
+
+    const observations =
+      rootFilter === "true" ? roots : rootFilter === "false" ? children : [...roots, ...children];
+
+    const offset = Number(parameters.get("cursor") ?? 0);
+    const nextOffset = offset + Number(parameters.get("limit"));
+
+    sendJson(response, 200, {
+      data: observations.slice(offset, nextOffset),
+      meta: nextOffset < observations.length ? { cursor: String(nextOffset) } : {},
+    });
+  });
+
+  const response = await fetch(`${app.origin}/`);
+  const body = await response.text();
+
+  assert.equal(response.status, 200);
+  assert.match(body, /Failed run/);
+  assert.match(body, /Other run/);
+  assert.match(body, /2 shown/);
+  assert.equal((body.match(/1 logical root/g) ?? []).length, 2);
+  assert.match(body, /class="level-rail error"/);
+  assert.match(body, /Highest levels may be partial/);
 });
 
 test("v3 filters only facts supplied by the legacy trace list", async (t) => {
@@ -415,6 +509,36 @@ test("trace detail lists agent prompts and tools and marks each model turn", asy
   assert.match(body, /I will search &lt;script&gt;alert\(1\)&lt;\/script&gt;/);
   assert.doesNotMatch(body, /<script>alert\(1\)<\/script>/);
   assert.match(response.headers.get("content-security-policy") ?? "", /script-src 'none'/);
+});
+
+test("trace detail includes standalone tool results in the agent sidebar", async (t) => {
+  const app = await startTestApp(t, (_request, response) => {
+    sendJson(response, 200, {
+      data: [
+        fullObservation({
+          type: "TOOL",
+          name: "Catalog lookup",
+          output: JSON.stringify({
+            role: "tool",
+            tool_call_id: "call-catalog",
+            content: "Milk costs <3> euros.",
+          }),
+        }),
+      ],
+      meta: {},
+    });
+  });
+
+  const response = await fetch(`${app.origin}/traces/trace-1`);
+  const body = await response.text();
+
+  assert.equal(response.status, 200);
+  assert.match(body, /<aside class="agent-sidebar"/);
+  const sidebar = body.slice(body.indexOf('<aside class="agent-sidebar"'));
+  assert.match(sidebar, /Tool result/);
+  assert.match(sidebar, /call-catalog/);
+  assert.match(sidebar, /Milk costs &lt;3&gt; euros/);
+  assert.doesNotMatch(sidebar, /JSON shape was not recognized/);
 });
 
 test("trace detail renders Pydantic AI system prompts", async (t) => {
@@ -918,6 +1042,39 @@ test("a later v4 page failure does not reclassify the deployment as v3", async (
 
     if (url.pathname === "/api/public/v2/observations") {
       sendJson(response, 404, { message: "cursor expired" });
+
+      return;
+    }
+
+    sendJson(response, 200, legacyPage([]));
+  });
+
+  const response = await fetch(`${app.origin}/`);
+  const body = await response.text();
+
+  assert.equal(response.status, 502);
+  assert.match(body, /HTTP 404/);
+  assert.deepEqual(paths, ["/api/public/v2/observations", "/api/public/v2/observations"]);
+});
+
+test("a failed severity read after v4 roots does not reclassify the deployment as v3", async (t) => {
+  const paths: string[] = [];
+
+  const app = await startTestApp(t, (request, response) => {
+    const url = new URL(request.url ?? "/", "http://langfuse.test");
+    paths.push(url.pathname);
+
+    if (
+      url.pathname === "/api/public/v2/observations" &&
+      url.searchParams.get("isRootObservation") === "true"
+    ) {
+      sendJson(response, 200, { data: [lightObservation()], meta: {} });
+
+      return;
+    }
+
+    if (url.pathname === "/api/public/v2/observations") {
+      sendJson(response, 404, { message: "not found" });
 
       return;
     }

@@ -20,6 +20,7 @@ const PAGE_REQUEST_TIMEOUT_MS = 10_000;
 
 export const QUERY_LIMITS = Object.freeze({
   recent: 20_000,
+  recentSeverity: 20_000,
   session: 20_000,
   trace: 10_000,
 });

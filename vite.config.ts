@@ -54,7 +54,7 @@ export default defineConfig({
     },
     overrides: [
       {
-        files: ["test/**/*.ts"],
+        files: ["test/**/*.ts", "integrations/prime-agent/**/*.test.ts"],
         rules: {
           "typescript/no-floating-promises": "off",
         },

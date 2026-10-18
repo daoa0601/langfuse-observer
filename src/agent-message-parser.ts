@@ -475,7 +475,10 @@ function parseToolCall(
   return recordContentPart(
     {
       kind: "tool-call",
-      id: stringValue(value["id"]) ?? stringValue(value["call_id"]),
+      id:
+        value["type"] === "function_call"
+          ? stringValue(value["call_id"])
+          : stringValue(value["id"]),
       name: excerpt(name ?? "Unnamed tool", joinPointer(pointer, "name"), context.budget, issues),
       arguments:
         argumentsValue === undefined

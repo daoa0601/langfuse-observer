@@ -86,8 +86,8 @@ export function recognizeDocument(
     return parseMessageRequest(source.origin, value, decodedLayers, budget);
   }
 
-  if (field === "output" && canParseStandaloneAssistant(source, value)) {
-    return parseStandaloneAssistant(source.origin, value, decodedLayers, budget);
+  if (field === "output" && canParseStandaloneMessage(source, value)) {
+    return parseStandaloneMessage(source.origin, value, decodedLayers, budget);
   }
 
   return null;
@@ -116,7 +116,7 @@ function recognizeArray(
     isJsonObject(first) &&
     first["role"] === "assistant"
   ) {
-    return parseStandaloneAssistant(source.origin, first, decodedLayers, budget, "/0");
+    return parseStandaloneMessage(source.origin, first, decodedLayers, budget, "/0");
   }
 
   if (field === "output" && canParseStandaloneAssistantArray(source, value)) {
@@ -290,14 +290,14 @@ function parseAnthropicResponse(
   return { recognizer, messages: [message], tools: [], issues };
 }
 
-function parseStandaloneAssistant(
+function parseStandaloneMessage(
   origin: PayloadOrigin,
   value: JsonObject,
   decodedLayers: 0 | 1 | 2,
   budget: InspectionBudget,
   pointer = "",
 ): RecognizedDocument {
-  const recognizer = "assistant-output";
+  const recognizer = value["role"] === "tool" ? "tool-output" : "assistant-output";
   const context = createParseContext(origin, "output", recognizer, decodedLayers, budget);
   const parsed = parseMessage(value, pointer, "output-reply", context, null);
 
@@ -407,12 +407,16 @@ function hasResponsesTool(value: JsonValue | undefined): boolean {
   );
 }
 
-function canParseStandaloneAssistant(source: AgentPayloadSource, value: JsonObject): boolean {
-  return (
-    source.origin.kind === "observation" &&
-    source.origin.allowStandaloneAssistantOutput &&
-    value["role"] === "assistant"
-  );
+function canParseStandaloneMessage(source: AgentPayloadSource, value: JsonObject): boolean {
+  if (source.origin.kind !== "observation") {
+    return false;
+  }
+
+  if (value["role"] === "tool") {
+    return source.origin.sourceRole === "tool-execution";
+  }
+
+  return source.origin.allowStandaloneAssistantOutput && value["role"] === "assistant";
 }
 
 function canParseStandaloneAssistantArray(

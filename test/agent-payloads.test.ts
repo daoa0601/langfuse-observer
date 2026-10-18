@@ -181,6 +181,49 @@ test("parses OpenAI Responses and Anthropic payloads", () => {
   assert.equal(itemAt(itemAt(anthropic.replies, 0).parts, 0).kind, "tool-call");
 });
 
+test("Responses tool calls use the same call ID as their results", () => {
+  const report = inspectAgentPayloads([
+    modelTurn({
+      output: {
+        object: "response",
+        output: [
+          {
+            type: "function_call",
+            id: "fc-item",
+            call_id: "call-catalog",
+            name: "search_catalog",
+            arguments: "{}",
+          },
+        ],
+      },
+    }),
+    modelTurn({
+      id: "turn-2",
+      startedAt: "2026-09-10T12:01:00.000Z",
+      input: {
+        input: [{ type: "function_call_output", call_id: "call-catalog", output: "Milk" }],
+      },
+    }),
+  ]);
+
+  const first = itemAt(report.turns, 0);
+  const second = itemAt(report.turns, 1);
+
+  if (first.kind === "unrecognized" || second.kind === "unrecognized") {
+    throw new Error("Expected the Responses call and result to parse");
+  }
+
+  const call = itemAt(itemAt(first.replies, 0).parts, 0);
+  const result = itemAt(itemAt(second.inputContext, 0).parts, 0);
+
+  if (call.kind !== "tool-call" || result.kind !== "tool-result") {
+    throw new Error("Expected a tool call followed by its result");
+  }
+
+  assert.equal(call.id, "call-catalog");
+  assert.equal(result.callId, call.id);
+});
+
 test("parses Pydantic AI model messages and their system prompt", () => {
   const report = inspectAgentPayloads([
     modelTurn({
