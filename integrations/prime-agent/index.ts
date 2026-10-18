@@ -183,7 +183,8 @@ export function registerTracing(pi: PrimeExtensionAPI, settings: Settings): void
     };
 
     const run = startRun(root, bodies);
-    const input = body({ role: "user", content: event.prompt }, run);
+    // Message arrays are the root shape the observer parses outside model turns.
+    const input = body([{ role: "user", content: event.prompt }], run);
 
     if (input !== undefined) root.input = input;
   });
@@ -290,7 +291,7 @@ export function registerTracing(pi: PrimeExtensionAPI, settings: Settings): void
     const reply = finalReply(event.messages);
 
     if (run && reply !== null) {
-      const output = body(reply, run);
+      const output = body([reply], run);
 
       if (output !== undefined) run.root.output = output;
     }

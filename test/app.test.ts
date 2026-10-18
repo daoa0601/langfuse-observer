@@ -1057,6 +1057,39 @@ test("a later v4 page failure does not reclassify the deployment as v3", async (
   assert.deepEqual(paths, ["/api/public/v2/observations", "/api/public/v2/observations"]);
 });
 
+test("a failed severity read after v4 roots does not reclassify the deployment as v3", async (t) => {
+  const paths: string[] = [];
+
+  const app = await startTestApp(t, (request, response) => {
+    const url = new URL(request.url ?? "/", "http://langfuse.test");
+    paths.push(url.pathname);
+
+    if (
+      url.pathname === "/api/public/v2/observations" &&
+      url.searchParams.get("isRootObservation") === "true"
+    ) {
+      sendJson(response, 200, { data: [lightObservation()], meta: {} });
+
+      return;
+    }
+
+    if (url.pathname === "/api/public/v2/observations") {
+      sendJson(response, 404, { message: "not found" });
+
+      return;
+    }
+
+    sendJson(response, 200, legacyPage([]));
+  });
+
+  const response = await fetch(`${app.origin}/`);
+  const body = await response.text();
+
+  assert.equal(response.status, 502);
+  assert.match(body, /HTTP 404/);
+  assert.deepEqual(paths, ["/api/public/v2/observations", "/api/public/v2/observations"]);
+});
+
 test("v4 pagination rejects malformed cursor metadata", async (t) => {
   const app = await startTestApp(t, (_request, response) => {
     sendJson(response, 200, { data: [], meta: { cursor: 42 } });

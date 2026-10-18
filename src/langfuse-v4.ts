@@ -65,6 +65,8 @@ export function createCurrentObserver({
               QUERY_LIMITS.recentSeverity,
               signal,
               "truncate",
+              // The root read already proved v4 support; a failure here is an upstream error.
+              false,
             );
 
       return Object.freeze({
@@ -167,6 +169,7 @@ export function createCurrentObserver({
     rowLimit: number,
     signal: AbortSignal | undefined,
     overflow: "reject" | "truncate" = "reject",
+    probesApi = true,
   ): Promise<{ rows: Observation[]; complete: boolean }> {
     const rows: Observation[] = [];
     const seenCursors = new Set<string>();
@@ -187,7 +190,7 @@ export function createCurrentObserver({
         path: "/api/public/v2/observations",
         query: pageQuery,
         signal,
-        unsupportedOnMissing: cursor === null,
+        unsupportedOnMissing: probesApi && cursor === null,
       });
 
       const page = parseCurrentPage(payload);

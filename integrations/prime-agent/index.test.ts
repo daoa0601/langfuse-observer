@@ -12,6 +12,7 @@ import {
   type JsonObject,
   type JsonValue,
 } from "../../src/json.ts";
+import { inspectAgentPayloads } from "../../src/agent-payloads.ts";
 import { registerTracing } from "./index.ts";
 import { readTracingEnabled } from "./config.ts";
 import { assistantOutput, capture, toolOutput } from "./privacy.ts";
@@ -428,6 +429,45 @@ describe("Prime lifecycle export", () => {
 
     try {
       expect(Object.keys(f.host.handlers)).not.toContain("before_provider_request");
+    } finally {
+      f.close();
+    }
+  });
+  test("captured root prompt and reply parse as agent context in the observer", async () => {
+    const f = await fixture(true);
+
+    try {
+      const reply: JsonObject = {
+        role: "assistant",
+        stopReason: "stop",
+        content: [{ type: "text", text: "final answer" }],
+      };
+
+      await startRequest(f.host, "root prompt");
+      await f.host.emit("agent_end", { messages: [reply] });
+      await f.host.command?.("flush", f.host.ctx);
+
+      const root = exportedSpans(f.requests).find((span) => span["parentSpanId"] === undefined);
+
+      const report = inspectAgentPayloads([
+        {
+          origin: {
+            kind: "observation",
+            observationId: "root",
+            label: "Prime Agent",
+            sourceRole: "agent-context",
+            startedAt: "2026-01-01T00:00:00.000Z",
+            model: null,
+            allowStandaloneAssistantOutput: false,
+          },
+          input: spanAttribute(root, "langfuse.observation.input") ?? null,
+          output: spanAttribute(root, "langfuse.observation.output") ?? null,
+        },
+      ]);
+
+      expect(report.coverage).toBe("complete");
+      expect(JSON.stringify(report.contextSources)).toContain("root prompt");
+      expect(JSON.stringify(report.contextSources)).toContain("final answer");
     } finally {
       f.close();
     }
